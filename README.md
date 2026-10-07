@@ -89,8 +89,9 @@ script.
 
 Windows: double-click `install-windows.bat`. It checks for PowerShell 7 and
 Python 3.11, offers to install what is missing with winget, then hands off
-to `install.ps1`, which does ffmpeg, agentry next to this folder (git
-clone, or GitHub's ZIP if there is no git), and a venv. Log in to one
+to `install.ps1`, which does ffmpeg, agentry next to this folder from its
+latest release zip (no git needed; `-AgentryGit` clones main instead), and
+a venv. Log in to one
 backend once, `grok login` or `codex login`, and double-click `demo.bat`.
 It picks grok if that is logged in, else codex, draws strip 058 and opens
 the picker. `demo.bat 069-pillow-talk codex` forces a backend.

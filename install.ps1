@@ -9,11 +9,13 @@
 #   4. keys.ini from keys.ini.template, pointed at the xkcd project and at agentry
 #   5. the backend CLIs: codex (needs Node) and grok; it only prints the login commands
 #
-# Flags: -AgentryDir <path>  -SkipClis  -Yes (answer yes to every prompt)
+# Flags: -AgentryDir <path>  -AgentryGit (clone main instead of the release zip)
+#        -SkipClis  -Yes (answer yes to every prompt)
 
 [CmdletBinding()]
 param(
     [string]$AgentryDir = "",
+    [switch]$AgentryGit,
     [switch]$SkipClis,
     [switch]$Yes
 )
@@ -47,33 +49,39 @@ Write-Host ""
 Write-Host "  === agentry-demo install.ps1 ==="
 Write-Host ""
 
-# --- 1. ffmpeg (git is optional, see step 2) --------------------------------
+# --- 1. ffmpeg ---------------------------------------------------------------
 if (-not (Have 'ffmpeg')) { WingetInstall 'Gyan.FFmpeg' 'ffmpeg' }
 Write-Host "  [+] ffmpeg found."
-if (Have 'git') { Write-Host "  [+] git found." } else { Write-Host "  [ ] git not found; agentry will be downloaded as a ZIP instead." }
 
-# --- 2. agentry: next to this folder. git clone if git exists, else the ZIP
-#        GitHub serves for the main branch, so nothing is bundled and nothing
-#        goes stale in this repo.
+# --- 2. agentry: next to this folder, from its latest GitHub release zip
+#        (https://github.com/aweussom/agentry/releases). No git needed.
+#        -AgentryGit clones main instead, for people who want the edge.
 if (-not $AgentryDir) { $AgentryDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'agentry' }
 $AgentryDir = [System.IO.Path]::GetFullPath($AgentryDir)
 if (-not (Test-Path (Join-Path $AgentryDir 'agentry.py'))) {
     Write-Host "  agentry is not at $AgentryDir."
-    if (Have 'git') {
+    if ($AgentryGit) {
+        if (-not (Have 'git')) { WingetInstall 'Git.Git' 'git' }
         Write-Host "  The command: git clone https://github.com/aweussom/agentry `"$AgentryDir`""
         if (-not (Ask "Clone it now")) { exit 1 }
         git clone https://github.com/aweussom/agentry "$AgentryDir"
     } else {
-        $zipUrl = 'https://github.com/aweussom/agentry/archive/refs/heads/main.zip'
-        Write-Host "  Will download $zipUrl and unpack it to $AgentryDir"
+        $rel = Invoke-RestMethod 'https://api.github.com/repos/aweussom/agentry/releases/latest'
+        $asset = $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
+        if (-not $asset) { Write-Host "  No zip asset on the latest agentry release ($($rel.tag_name)). Try -AgentryGit."; exit 1 }
+        Write-Host "  Latest release: $($rel.tag_name), $($asset.name), $([math]::Round($asset.size / 1MB, 1)) MB"
+        Write-Host "  Will download it and unpack to $AgentryDir"
         if (-not (Ask "Download it now")) { exit 1 }
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) 'agentry-main.zip'
-        Invoke-WebRequest -Uri $zipUrl -OutFile $tmp
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) $asset.name
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmp
         $unpack = Join-Path ([System.IO.Path]::GetTempPath()) 'agentry-unpack'
         if (Test-Path $unpack) { Remove-Item $unpack -Recurse -Force }
         Expand-Archive -Path $tmp -DestinationPath $unpack
-        Move-Item (Join-Path $unpack 'agentry-main') $AgentryDir
+        # the zip holds one top folder (agentry/); whatever it is called, that is the tree
+        $top = Get-ChildItem $unpack -Directory | Select-Object -First 1
+        Move-Item $top.FullName $AgentryDir
         Remove-Item $tmp -Force
+        Set-Content (Join-Path $AgentryDir 'INSTALLED-FROM.txt') "agentry release $($rel.tag_name), $($asset.name), installed $(Get-Date -Format yyyy-MM-dd)"
     }
 }
 if (-not (Test-Path (Join-Path $AgentryDir 'agentry.py'))) {
