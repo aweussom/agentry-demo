@@ -10,7 +10,7 @@ Everything that carries Randall Munroe's work is not:
 - `prosjekter/xkcd/filmer/`, the film and its subtitles
 - `prosjekter/xkcd/utkast/` and `prosjekter/xkcd/video/`, the drafts, which
   quote his dialogue word for word
-- `prosjekter/xkcd/gallery/`, the grid and the GIF
+- `prosjekter/xkcd/gallery/`, the grid and the animation
 - `prosjekter/xkcd/sources/`, his originals
 
 The originals are by Randall Munroe, https://xkcd.com, under

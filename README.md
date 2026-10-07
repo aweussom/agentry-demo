@@ -15,7 +15,7 @@ because codex has no video tool.
 
 ![Eight redrawn xkcd strips in a grid](prosjekter/xkcd/gallery/strips-grid.jpg)
 
-![Angular Momentum, the film, as a GIF](prosjekter/xkcd/gallery/162-angular-momentum.gif)
+![Angular Momentum, the film, as an animated WebP](prosjekter/xkcd/gallery/162-angular-momentum.webp)
 
 The strips are Randall Munroe's. The dialogue is his, word for word. The
 drawings, the cast and the film are mine, made in an evening and a morning. Credit and
