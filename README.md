@@ -90,8 +90,8 @@ Three versions of the film are in `prosjekter/xkcd/filmer/`: silent with
 the `.srt` beside it, the same with the subtitles burned in, and that one
 with voices. The voices are xAI's text-to-speech, `eve` for Megan and
 `rex` for Cueball, one call per line, laid on at the subtitle times with
-ffmpeg. That is the second place an API key was used; agentry does not
-expose a speech endpoint. The clip for shot 3 is the first: Grok Build
+ffmpeg. The voices are the second place an API key was used; agentry does
+not expose a speech endpoint. The clip for shot 3 is the first: Grok Build
 spun her the wrong way twice and locked her head once, so that one clip
 came from xAI's API on the lite video model. Everything else is agentry.
 
