@@ -5,7 +5,8 @@ pipeline on the other end of the socket, not a chat window. Eight classic xkcd
 strips redrawn as a vertical webtoon with a recurring cast, and one of them
 turned into a 40 second film. Every image and every clip was made through
 agentry's OpenAI-compatible endpoint on localhost, billed to a subscription I
-already had. No API key, except for one clip, and the text says which.
+already had. No API key, except for one clip and the two voices, and the
+text says which.
 
 I used two subscriptions, ChatGPT for the strips and SuperGrok for the
 film, because I like the look of ChatGPT's images better. That is taste,
@@ -84,6 +85,15 @@ The script is in `prosjekter/xkcd/video/`. Nine shots, each with a prompt
 for the key frame and one for the movement. Shots without movement become
 stills with a slow zoom. The subtitles come out as `.srt` from the same
 script.
+
+Three versions of the film are in `prosjekter/xkcd/filmer/`: silent with
+the `.srt` beside it, the same with the subtitles burned in, and that one
+with voices. The voices are xAI's text-to-speech, `eve` for Megan and
+`rex` for Cueball, one call per line, laid on at the subtitle times with
+ffmpeg. That is the second place an API key was used; agentry does not
+expose a speech endpoint. The clip for shot 3 is the first: Grok Build
+spun her the wrong way twice and locked her head once, so that one clip
+came from xAI's API on the lite video model. Everything else is agentry.
 
 ## Running it yourself
 

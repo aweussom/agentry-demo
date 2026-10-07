@@ -2,7 +2,7 @@
 tittel: Angular Momentum
 karakterer: cueball, megan
 format: video
-status: film v3 2026-10-07; shot 3 clip is the xAI API (grok-imagine-video-1.5-lite) take, all other clips and all key frames via agentry on SuperGrok
+status: approved 2026-10-07 (subtitled and voiced versions). Shot 3 clip is the xAI API lite take; all key frames and the other six clips via agentry on SuperGrok. Voices: xAI TTS, Megan=eve, Cueball=rex, mixed with _bench/xai_tts_mix.py
 nr: 162
 kilde: xkcd 162 "Angular Momentum", https://xkcd.com/162/, CC BY-NC 2.5
 tillegg_megan: tonight she wears a long, oversized light-grey T-shirt as a nightshirt, bare legs, barefoot; no burgundy top, no jeans
