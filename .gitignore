@@ -1,0 +1,6 @@
+# keys.ini is tracked here on purpose: it holds no secrets, only which
+# provider section is which and where agentry lives.
+prosjekter/*/generert/
+__pycache__/
+.venv/
+*.pyc

@@ -1,0 +1,31 @@
+1
+00:00:06,000 --> 00:00:08,900
+Cueball: «What are you doing?»
+
+2
+00:00:09,000 --> 00:00:11,900
+Megan: «Spinning counterclockwise.»
+
+3
+00:00:12,000 --> 00:00:15,900
+Megan: «Each turn robs the planet of angular momentum.»
+
+4
+00:00:16,000 --> 00:00:19,900
+Megan: «Slowing its spin the tiniest bit.»
+
+5
+00:00:20,000 --> 00:00:23,900
+Megan: «Lengthening the night, pushing back the dawn.»
+
+6
+00:00:24,000 --> 00:00:27,900
+Megan: «Giving me a little more time here.»
+
+7
+00:00:28,000 --> 00:00:31,900
+Megan: «With you.»
+
+8
+00:00:32,000 --> 00:00:34,900
+after xkcd #162 by Randall Munroe, CC BY-NC 2.5

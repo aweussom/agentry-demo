@@ -1,0 +1,128 @@
+# Copy this file to keys.ini and fill in your keys. keys.ini is gitignored.
+# Every other section is a provider; 'type' picks the code path in comic.py.
+
+[comic]
+# Which project under prosjekter/ to use when a command does not name one and
+# is not run from inside a project folder. Each project has its own
+# prosjekt.ini with canon files, examples, header and default provider.
+project = eksempel
+# Machine-wide fallbacks, used only if prosjekt.ini does not set them.
+provider = openai
+fix_provider = openai-images
+
+[agentry]
+type = openai_images
+# comic.py starts its own agentry on this port if nothing answers there, so
+# a production instance on 8765 is left alone. Set autostart = false to use
+# an instance you started yourself.
+base_url = http://localhost:8770/v1
+autostart = true
+agentry_dir = C:/devel/aweussom/python/agentry
+agentry_args = -Backend codex -Model gpt-6-sol -ReasoningEffort low
+autostart_timeout = 120
+image_model = gpt-image-2
+size = 1024x1536
+edit = true
+max_refs = 5
+timeout = 900
+
+# OpenAI Responses API. An LLM reads canon + cards + draft and drives the
+# image_generation tool. Supports multi-turn corrections (comic.py fix).
+[openai]
+type = openai_responses
+api_key = sk-...
+model = gpt-6-sol
+# Image model for the image_generation tool. gpt-image-2.5 rejects input_fidelity;
+# add "input_fidelity = high" here only for gpt-image-1.x models.
+image_model = gpt-image-2.5-flare
+size = 1024x1536
+quality = medium
+
+# OpenAI-compatible Images API (images.edit / images.generate). No LLM in
+# between: canon text + draft go straight to the image model as the prompt.
+# Works for any vendor exposing the same endpoint; set base_url.
+# edit = true  -> images.edit with cards (and examples) as reference images
+# edit = false -> images.generate, text only, cards are NOT sent
+[openai-images]
+type = openai_images
+api_key = sk-...
+image_model = gpt-image-2.5-flare
+size = 1024x1536
+quality = medium
+edit = true
+
+# Grok through a private agentry instance (grok-cli backend). xAI allows at
+# most 3 reference images, returns JPEG at 832x1248 for 1024x1536, 20 to 30 s
+# per call. Combined character cards are a must here.
+[grok-agentry]
+type = openai_images
+base_url = http://localhost:8766/v1
+autostart = true
+agentry_dir = C:/devel/aweussom/python/agentry
+agentry_args = -Backend grok
+autostart_timeout = 120
+image_model = grok
+size = 1024x1536
+edit = true
+max_refs = 3
+timeout = 600
+
+# xAI / Grok direct API. Check the current image model name in the xAI docs.
+[grok]
+type = openai_images
+api_key = xai-...
+base_url = https://api.x.ai/v1
+image_model = grok-imagine-image-2.0
+edit = true
+
+# xAI video, direct (video.py clips). Per second: lite $0.02, grok-imagine-video
+# $0.05, grok-imagine-video-1.5 $0.08 (2026-10-07). api_key may be left out;
+# then the one under [grok] is used. Select with clip_provider = grok-video
+# under [video] in prosjekt.ini, or `video.py clips ... -p grok-video`.
+[grok-video]
+type = grok_video
+model = grok-imagine-video-1.5-lite
+resolution = 480p
+# Fixed clip length in seconds; empty = the shot's length + 1, within 4..15.
+duration =
+
+# Example slot for another OpenAI-compatible image endpoint
+# (Seedream via Volcengine Ark, Qwen-Image via a gateway, etc.). Unverified.
+#[seedream]
+#type = openai_images
+#api_key = ...
+#base_url = https://ark.cn-beijing.volces.com/api/v3
+#image_model = doubao-seedream-4-0-250828
+#edit = false
+
+# --- Video (Seedance) ---------------------------------------------------
+# Used by video.py, not by comic.py. Fill in one of them. Untested.
+#
+# fal.ai, pay per use. Key from fal.ai/dashboard/keys.
+# Endpoint bytedance/seedance-2.5/image-to-video: image_url (start frame),
+# prompt, duration "4".."30", resolution 480p/720p, aspect_ratio 9:16.
+# Listed 2026-10-05 at about $0.22/s (480p) and $0.47/s (720p).
+[seedance-fal]
+type = seedance_fal
+api_key = ...
+model = bytedance/seedance-2.5/image-to-video
+resolution = 480p
+aspect_ratio = 9:16
+
+# BytePlus ModelArk (ByteDance's own API, international), pay per use,
+# token billing. Key and endpoint from console.byteplus.com > ModelArk.
+[seedance-byteplus]
+type = seedance_ark
+api_key = ...
+base_url = https://ark.ap-southeast.bytepluses.com/api/v3
+model = seedance-2-5
+resolution = 480p
+
+# Seevio (independent reseller, API key in their dashboard, credits).
+# POST /v1/videos/generations, GET /v1/tasks/{taskId}, Bearer sk_live_...
+[seedance-seevio]
+type = seedance_seevio
+api_key = sk_live_...
+base_url = https://api.seevio.ai
+model = seedance-2-5
+resolution = 480p
