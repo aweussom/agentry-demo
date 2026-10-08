@@ -19,6 +19,9 @@ base_url = http://localhost:8770/v1
 autostart = true
 agentry_dir = C:/devel/aweussom/python/agentry
 agentry_args = -Backend codex -Model gpt-6-sol -ReasoningEffort low
+# When a codex call fails (quota, timeout), a per-panel run retries that panel
+# once on this provider. Needs its api_key set.
+fallback = openai-images
 autostart_timeout = 120
 image_model = gpt-image-2
 size = 1024x1536

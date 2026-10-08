@@ -1015,10 +1015,21 @@ def record(draft: Draft, provider: Provider, kind: str, job: Job, res: Result, e
         print("--\n" + res.text.strip())
 
 
+def portrait_project() -> bool:
+    """`format = paneler` in prosjekt.ini: the comic is made as tall panels,
+    one image per panel, never as a landscape strip. `new` draws panels and
+    `approve` cuts them out of the picked run into paneler/<slug>/."""
+    return (PROJ.get("format") or "").strip().lower() in ("paneler", "panels", "portrait")
+
+
 def cmd_new(cp, args) -> None:
     draft = parse_draft(Path(args.draft))
     provider = get_provider(cp, args.provider)
     job = build_job(cp, args, provider, draft)
+    if portrait_project() and not getattr(args, "strip", False):
+        args.panels = True
+        if not getattr(args, "panel_size", None):
+            args.panel_size = PROJ.get("panel_size") or "1024x1536"
     if getattr(args, "panels", False):
         return new_panels(cp, args, provider, draft, job)
     print_plan(provider, job, "new")
@@ -1097,8 +1108,8 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
             refs += (", then the EMPTY setting of this strip with nobody in it: draw this panel in "
                      "that exact place, style and light, adding only the characters named above.")
         elif with_style:
-            refs += (", then the finished panel 1 of this same strip: match its drawing style, "
-                     "colours, light and the exact same setting.")
+            refs += (", then a finished panel of this same strip, the one just before this one: match its "
+                     "drawing style, colours, light, the same place and the same vehicles and objects.")
         else:
             refs += "."
         return (
@@ -1108,8 +1119,9 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
             "Speech bubbles are read top to bottom, then left to right: the line spoken FIRST sits "
             "clearly higher in the panel than the reply, and a reply never sits level with or above "
             "the line it answers.\n\n"
-            f"{canon}\n\n{refs}\n\n---\n\nThe strip, for context (do not draw the other panels):\n\n"
-            f"{pre}\n\nThis panel:\n\n{text}"
+            f"{canon}\n\n{refs}\n\n---\n\nThe strip, for context (do not draw the other panels). Fixed details "
+            "stated here, such as clothes, props, text on things, colour rules and black-and-white panels, "
+            f"apply to this panel too:\n\n{pre}\n\nThis panel:\n\n{text}"
         )
 
     plan = []
@@ -1134,12 +1146,47 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     results: dict[int, Path] = {}
 
+    only = set(getattr(args, "only", None) or [])
+    base_panels: dict[int, Path] = {}
+    if only:
+        # keep the other panels from the picked run (picks.json), else the newest run with panels
+        state = load_state(draft)
+        picks_path = draft.workdir / "picks.json"
+        picked = json.loads(picks_path.read_text(encoding="utf-8")).get("picked") if picks_path.exists() else None
+        base = None
+        for r in reversed(state["runs"]):
+            if r.get("panels") and (not picked or any(Path(i.replace("\\", "/")).name == picked for i in r.get("images", []))):
+                base = r
+                break
+        if not base:
+            base = next((r for r in reversed(state["runs"]) if r.get("panels")), None)
+        if not base:
+            die("--only trenger en tidligere --panels-kjøring")
+        for k, q in enumerate(base["panels"], 1):
+            base_panels[k] = PROJ.abs(q)
+        missing = [k for k in only if k not in base_panels]
+        if missing:
+            die(f"--only: panel {missing} finnes ikke i kjøringen ({len(base_panels)} paneler)")
+        print(f"only       : tegner {sorted(only)} på nytt, resten fra {Path(base['images'][-1]).name}")
+
+    fallback = get_provider(cp, provider.opt("fallback")) if provider.opt("fallback") else None
+
     def run_one(n, text, chars, cards, style):
         refs = provider._cap_refs([p for _, p in cards], [style] if style else [])
         t0 = dt.datetime.now()
-        res = provider._run(prompt_for(n, text, chars, style is not None), refs, 1, size)
-        if not res.images:
-            die(f"panel {n}: ingen bilder i svaret")
+        prompt = prompt_for(n, text, chars, style is not None)
+        try:
+            res = provider._run(prompt, refs, 1, size)
+            if not res.images:
+                raise RuntimeError("ingen bilder i svaret")
+        except Exception as e:  # quota, timeout, a 5xx from the proxy: one retry on the fallback
+            if not fallback:
+                die(f"panel {n}: {e}")
+            print(f"  panel {n}: [{provider.name}] feilet ({str(e)[:120]}); prøver [{fallback.name}]", flush=True)
+            refs = fallback._cap_refs([p for _, p in cards], [style] if style else [])
+            res = fallback._run(prompt, refs, 1, size)
+            if not res.images:
+                die(f"panel {n}: ingen bilder fra {fallback.name} heller")
         data, ext = res.images[0]
         out = draft.workdir / f"{stamp}-panel-{n}.{ext}"
         out.write_bytes(data)
@@ -1147,7 +1194,29 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         return out
 
     workers = int(provider.opt("parallel") or 2)
-    if use_bg:
+    if only and getattr(args, "chain", False):
+        # sequential: each redrawn panel references the panel before it
+        first = plan[0]
+        for pl in plan:
+            if pl[0] not in only:
+                results[pl[0]] = base_panels[pl[0]]
+        for pl in plan:
+            if pl[0] in only:
+                prev = results.get(pl[0] - 1) if pl[0] > 1 else None
+                results[pl[0]] = run_one(*pl, prev)
+        todo = []
+    elif only:
+        first = plan[0]
+        if first[0] in only:
+            results[first[0]] = run_one(*first, None)
+        else:
+            results[first[0]] = base_panels[first[0]]
+        style = results[first[0]]
+        todo = [pl for pl in plan[1:] if pl[0] in only]
+        for pl in plan[1:]:
+            if pl[0] not in only:
+                results[pl[0]] = base_panels[pl[0]]
+    elif use_bg:
         style_canon = read_canon(job.canon_files, [])
         bg_prompt = (
             "The empty setting for a comic strip, as ONE single landscape image filling the whole "
@@ -1169,10 +1238,11 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         results[first[0]] = run_one(*first, None)
         style = results[first[0]]
         todo = plan[1:]
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(run_one, *pl, style): pl[0] for pl in todo}
-        for f, n in futs.items():
-            results[n] = f.result()
+    if todo:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(run_one, *pl, style): pl[0] for pl in todo}
+            for f, n in futs.items():
+                results[n] = f.result()
 
     ordered = [results[n] for n, *_ in plan]
     strip = stitch_panels(ordered, width)
@@ -1221,6 +1291,17 @@ def credit_for(draft: Draft) -> str | None:
 
 def cmd_approve(cp, args) -> None:
     draft = parse_draft(Path(args.draft))
+    if portrait_project() and not args.image and not args.raw:
+        # the picked run (picks.json), else the newest: its panels become paneler/<slug>/
+        picks_path = draft.workdir / "picks.json"
+        picked = json.loads(picks_path.read_text(encoding="utf-8")).get("picked") if picks_path.exists() else None
+        state = load_state(draft)
+        if picked:
+            for i, r in enumerate(state["runs"]):
+                if any(Path(img.replace("\\", "/")).name == picked for img in r.get("images", [])):
+                    state["runs"] = state["runs"][: i + 1]
+                    break
+        return cut_panels_from_run(draft, state)
     if args.image:
         src = Path(args.image).resolve()
     else:
@@ -1237,6 +1318,147 @@ def cmd_approve(cp, args) -> None:
         print(PROJ.rel(dst))
     else:
         compose(src, PROJ.striper / f"{draft.stem}.png", cp, args.crop_top, credit_for(draft))
+
+
+# --------------------------------------------------------------------------
+# portrait: redraw each panel of the approved strip as a tall 2:3 image.
+# The panel itself is the first reference, so identity and lettering come
+# from the strip; the cards for the people named in the panel's paragraph
+# come along; a name in --exclude is kept out of the picture even when the
+# paragraph mentions it (a card is an invitation). Output per run in
+# generert/<slug>/portrait/<stamp>-panel-N.<ext>; --approve copies the
+# newest of each panel to paneler/<slug>/N.jpg, the set that goes to
+# Facebook (multi-photo), Instagram (carousel) and the blog viewer.
+# --------------------------------------------------------------------------
+
+def portrait_prompt(n: int, m: int, canon: str, names: str, text: str, exclude: list[str]) -> str:
+    out = (
+        f"The first image is panel {n} of {m} of a finished comic strip, drawn as a wide landscape panel. "
+        "Redraw EXACTLY this panel as ONE tall portrait image for a phone screen: the same place, the "
+        "same characters looking identical, the same action and expressions, and the same speech "
+        "bubbles with exactly the same text, spelled identically. Re-compose for the tall format: "
+        "characters closer to the viewer and stacked in depth instead of side by side, more room above "
+        "and below, nothing important near the top or bottom edge (the top and bottom sixth may be "
+        "cropped later). Same drawing style, colours and lettering as the panel. No panel border, no "
+        "other panels, no title.\n\n"
+        f"{canon}\n\nThe other reference images are character cards for {names}: identity only.\n\n"
+        f"Draft text for this panel, for what must be in it:\n\n{text}"
+    )
+    for c in exclude:
+        out += f"\n\n{c.capitalize()} is NOT in this picture, only looked at, off frame. Do not draw {c.capitalize()}."
+    return out
+
+
+def cut_panels_from_run(draft: Draft, state: dict, wanted: set[int] | None = None) -> None:
+    """The panels come out of a --panels run (or a fix on it): the newest run
+    image in `state` is a stitched tall strip. Cut it with the known geometry
+    (panel count from the last --panels run, 14 px gutters, 3 px border),
+    never with the gutter detector: a snowy sky inside a tall panel reads as
+    a gutter. The result is the approved set, paneler/<slug>/N.jpg at 1080 px."""
+    from PIL import Image
+
+    approved = PROJ.root / "paneler" / draft.stem
+    prev = last_run(state)
+    if not prev or not prev.get("images"):
+        die(f"Ingen kjøringer for {draft.stem}")
+    src_img = PROJ.abs(prev["images"][-1])
+    im = Image.open(src_img).convert("RGB")
+    n_panels = next((len(r["panels"]) for r in reversed(state["runs"]) if r.get("panels")), 0)
+    line, gutter = 3, 14
+    if n_panels >= 2:
+        ph = (im.height - gutter * (n_panels - 1)) / n_panels
+        spans = [(round(i * (ph + gutter)), round(i * (ph + gutter) + ph)) for i in range(n_panels)]
+    else:
+        spans = detect_panels(im)
+    if len(spans) < 2:
+        die(f"{src_img.name} ser ikke ut som en stiftet panelkjøring ({len(spans)} panel)")
+    wanted = wanted or set(range(1, len(spans) + 1))
+    approved.mkdir(parents=True, exist_ok=True)
+    for old_file in approved.glob("*.jpg"):
+        old_file.unlink()
+    for n, (top, bottom) in enumerate(spans, 1):
+        if n not in wanted:
+            continue
+        panel = im.crop((line, top + line, im.width - line, bottom - line))
+        if panel.width != 1080:
+            panel = panel.resize((1080, round(panel.height * 1080 / panel.width)), Image.LANCZOS)
+        dst = approved / f"{n}.jpg"
+        panel.save(dst, quality=90, optimize=True)
+        print(f"{PROJ.rel(dst)}  <- {src_img.name} panel {n}")
+
+
+def cmd_portrait(cp, args) -> None:
+    from PIL import Image
+
+    draft = parse_draft(Path(args.draft))
+    out = draft.workdir / "portrait"
+    approved = PROJ.root / "paneler" / draft.stem
+    if args.approve is not None and (args.from_run or not any(out.glob("*-panel-*.*"))):
+        return cut_panels_from_run(draft, load_state(draft), set(args.approve) if args.approve else None)
+    if args.approve is not None:
+        found = sorted(out.glob("*-panel-*.*"))
+        if not found:
+            die(f"Ingen portrettpaneler i {PROJ.rel(out)}; kjør portrait uten --approve først")
+        newest: dict[int, Path] = {}
+        for f in found:  # sorted by stamp, so the last one per panel wins
+            n = int(f.stem.rsplit("-", 1)[1])
+            newest[n] = f
+        wanted = set(args.approve) if args.approve else set(newest)
+        approved.mkdir(parents=True, exist_ok=True)
+        for n in sorted(wanted):
+            if n not in newest:
+                die(f"panel {n} finnes ikke i {PROJ.rel(out)}")
+            im = Image.open(newest[n]).convert("RGB")
+            if im.width != 1080:
+                im = im.resize((1080, round(im.height * 1080 / im.width)), Image.LANCZOS)
+            dst = approved / f"{n}.jpg"
+            im.save(dst, quality=90, optimize=True)
+            print(f"{PROJ.rel(dst)}  <- {newest[n].name}")
+        return
+
+    provider = get_provider(cp, args.provider or PROJ.get("portrait_provider") or PROJ.get("fix_provider"))
+    if provider.type_name != "openai_images" or not getattr(provider, "edit", False):
+        die("portrait krever en openai_images-leverandør med edit=true")
+    strip = next((q for q in PROJ.striper.glob(f"{draft.stem}.*") if q.suffix.lower() in (".png", ".jpg")), None)
+    if not strip:
+        die(f"Ingen godkjent stripe for {draft.stem} i {PROJ.rel(PROJ.striper)}; approve først")
+    im = Image.open(strip).convert("RGB")
+    spans = detect_panels(im)
+    if PROJ.get("header"):
+        spans = spans[1:]
+    pre, texts = split_panels(draft.body)
+    canon = read_canon(PROJ.canon_for(provider.type_name, provider.name), draft.characters)
+    size = args.size or PROJ.get("portrait_size") or "1024x1536"
+    wanted = set(args.panels or range(1, len(spans) + 1))
+    out.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    print(f"== portrait: {draft.stem}")
+    print(f"provider   : [{provider.name}] {provider.describe()}")
+    print(f"strip      : {strip.name}, {len(spans)} paneler, {len(texts)} avsnitt, size {size}")
+    for n, (top, bottom) in enumerate(spans, 1):
+        if n not in wanted:
+            continue
+        src = out / f"src-{n}.png"
+        im.crop((0, top, im.width, bottom)).save(src)
+        text = next((t for k, t in texts if k == n), "")
+        chars = [c for c in (chars_in(text, draft.characters) if text else list(draft.characters)) if c not in args.exclude]
+        cards = select_cards(chars)
+        refs = provider._cap_refs([src] + [q for _, q in cards], [])
+        names = ", ".join(c for c, _ in cards)
+        prompt = portrait_prompt(n, len(spans), canon, names, text, args.exclude)
+        print(f"  panel {n}: cards {names}" + (f", uten {', '.join(args.exclude)}" if args.exclude else ""), flush=True)
+        if args.dry_run:
+            continue
+        t0 = dt.datetime.now()
+        res = provider._run(prompt, refs, 1, size)
+        if not res.images:
+            die(f"panel {n}: ingen bilder i svaret")
+        data, ext = res.images[0]
+        dst = out / f"{stamp}-panel-{n}.{ext}"
+        dst.write_bytes(data)
+        print(f"    -> {PROJ.rel(dst)}  {(dt.datetime.now() - t0).seconds} s", flush=True)
+    if not args.dry_run:
+        print(f"Se over, så: comic.py portrait {PROJ.rel(draft.path)} --approve")
 
 
 def cmd_compose(cp, args) -> None:
@@ -1279,6 +1501,11 @@ PICK_PAGE = """<!doctype html>
                         padding:4px 10px; font-weight:700; cursor:pointer; }}
   .run.picked header button {{ background:var(--line); color:var(--dim); }}
   .img {{ position:relative; }}  .img img {{ display:block; width:100%; height:auto; }}
+  .run.panels {{ width:{w3}px; }}
+  .grid {{ display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; padding:0 6px 6px; }}
+  .cell {{ position:relative; }}  .cell > img {{ display:block; width:100%; height:auto; }}
+  .cell .clip {{ position:relative; width:100%; aspect-ratio:2/3; overflow:hidden; }}
+  .cell .clip img {{ position:absolute; left:0; width:100%; }}
   .pan {{ position:absolute; left:0; right:0; cursor:pointer; border:2px solid transparent; }}
   .pan:hover {{ border-color:var(--hi); background:rgba(212,162,78,.08); }}
   .pan.has {{ border-color:var(--hi); }}
@@ -1374,6 +1601,27 @@ PICK_RUN = """<div class="run" data-img="{img}">
 PICK_PANEL = """<div class="pan" data-img="{img}" data-n="{n}" style="top:{top}%;height:{h}%">
 <span class="n">{n}</span><span class="c"></span></div>"""
 
+PICK_RUN_PANELS = """<div class="run panels" data-img="{img}">
+<header><span><b>#{i}</b> {kind} · {provider} · {time}</span>
+<button data-img="{img}">Velg denne</button></header>
+<div class="grid">{cells}</div>
+</div>"""
+
+# one panel image of a --panels run; the overlay covers it whole
+PICK_CELL = """<div class="cell"><img src="{src}" loading="lazy">
+<div class="pan" data-img="{img}" data-n="{n}" style="top:0;height:100%"><span class="n">{n}</span><span class="c"></span></div></div>"""
+
+# a tall stitched image (a fix of a --panels run) shown as a grid by cropping
+# the same image with object-position per panel
+PICK_RUN_TALL = """<div class="run panels" data-img="{img}">
+<header><span><b>#{i}</b> {kind} · {provider} · {time}</span>
+<button data-img="{img}">Velg denne</button></header>
+<div class="grid">{cells}</div>
+</div>"""
+
+PICK_CELL_SPAN = """<div class="cell"><div class="clip"><img src="{img}" loading="lazy" style="top:-{top}%;height:{hinv}%"></div>
+<div class="pan" data-img="{img}" data-n="{n}" style="top:0;height:100%"><span class="n">{n}</span><span class="c"></span></div></div>"""
+
 
 def build_pick_page(draft: Draft, width: int = 420) -> tuple[str, Path]:
     """HTML listing every image in the draft's generert folder, newest last,
@@ -1386,19 +1634,40 @@ def build_pick_page(draft: Draft, width: int = 420) -> tuple[str, Path]:
         for img in r.get("images", []):
             meta[Path(img.replace("\\", "/")).name] = {"i": i, "kind": r["kind"], "provider": r["provider"],
                                                       "time": (r.get("time") or "")[11:16]}
-    files = sorted(p for p in draft.workdir.iterdir() if p.suffix.lower() in IMAGE_EXTS and not p.name.startswith("compare"))
+    files = sorted(p for p in draft.workdir.iterdir() if p.suffix.lower() in IMAGE_EXTS
+                   and not p.name.startswith("compare") and not re.search(r"-panel-\d+\.", p.name))
+    panel_runs: dict[str, list[str]] = {}
+    for r in state["runs"]:
+        if r.get("panels"):
+            for img in r.get("images", []):
+                panel_runs[Path(img.replace("\\", "/")).name] = [Path(q.replace("\\", "/")).name for q in r["panels"]]
     picks_path = draft.workdir / "picks.json"
     picks = json.loads(picks_path.read_text(encoding="utf-8")) if picks_path.exists() else {}
     picks.setdefault("draft", PROJ.rel(draft.path))
     runs = []
     for p in files:
         m = meta.get(p.name, {"i": "-", "kind": "compose" if "compose" in p.name else "fil", "provider": "", "time": ""})
+        if p.name in panel_runs:
+            # a --panels run: show the panels themselves, side by side, each with
+            # one comment overlay; the pick and any fix still address the run image
+            cells = "".join(PICK_CELL.format(src=q, img=p.name, n=n) for n, q in enumerate(panel_runs[p.name], 1))
+            runs.append(PICK_RUN_PANELS.format(img=p.name, i=m["i"], kind=m["kind"] + " (paneler)", provider=m["provider"],
+                                               time=m["time"], cells=cells))
+            continue
         im = Image.open(p)
         H = im.height
+        if p.name.endswith("-fix-1.png") and H > 3 * im.width:
+            # a fix on a stitched --panels run: tall, so show its panels as a grid too
+            spans = detect_panels(im)
+            cells = "".join(PICK_CELL_SPAN.format(img=p.name, n=n, top=round(100 * t / (b - t), 3), hinv=round(100 * H / (b - t), 3))
+                            for n, (t, b) in enumerate(spans, 1))
+            runs.append(PICK_RUN_TALL.format(img=p.name, i=m["i"], kind=m["kind"], provider=m["provider"], time=m["time"],
+                                             cells=cells, n=len(spans)))
+            continue
         panels = "".join(PICK_PANEL.format(img=p.name, n=n, top=round(100 * t / H, 2), h=round(100 * (b - t) / H, 2))
                          for n, (t, b) in enumerate(detect_panels(im), 1))
         runs.append(PICK_RUN.format(img=p.name, i=m["i"], kind=m["kind"], provider=m["provider"], time=m["time"], panels=panels))
-    html = PICK_PAGE.format(title=f"{draft.stem}: velg og kommenter", slug=draft.stem, w=width,
+    html = PICK_PAGE.format(title=f"{draft.stem}: velg og kommenter", slug=draft.stem, w=width, w3=3 * round(width * 0.55) + 24,
                             picks=PROJ.rel(picks_path), runs="".join(runs), state=json.dumps(picks, ensure_ascii=False))
     return html, picks_path
 
@@ -1501,7 +1770,13 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("-n", type=int, default=1, help="antall varianter (kun openai_images)")
     p.add_argument("--no-examples", action="store_true", help="ikke send eksempelstriper")
     p.add_argument("--examples", help="kommaseparert liste eksempelstriper (overstyrer [comic] examples)")
+    p.add_argument("--strip", action="store_true", help="tegn som liggende stripe i ett kall selv om prosjektet "
+                   "har format = paneler")
     p.add_argument("--panels", action="store_true", help="ett kall per panel med kortene hver gang, panel 1 som stilreferanse, stiftet sammen med Pillow (for Grok)")
+    p.add_argument("--only", nargs="*", type=int, help="med --panels: tegn bare disse panelene på nytt og behold "
+                   "resten fra den valgte kjøringen (picks.json), ellers siste panelkjøring")
+    p.add_argument("--chain", action="store_true", help="med --only: tegn panelene etter hverandre, hvert med "
+                   "panelet foran som referanse (to svart-hvitt-paneler med samme biler)")
     p.add_argument("--background", action="store_true", help="med --panels: tegn først det tomme stedet fra "
                    "innledningen (tekst alene) og send det som referanse til hvert panel i stedet for panel 1; "
                    "for striper der figurene varierer mellom panelene")
@@ -1525,6 +1800,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--raw", action="store_true", help="kopier uendret, ingen header/kant")
     p.add_argument("--crop-top", help="piksler å klippe fra toppen, eller 'auto' (modellen tegnet egen header)")
     p.set_defaults(func=cmd_approve)
+
+    p = sub.add_parser("portrait", parents=[common], help="tegn hvert panel i den godkjente stripa som stående 2:3-bilde; "
+                       "--approve kopierer nyeste versjon til paneler/<slug>/N.jpg")
+    p.add_argument("draft")
+    p.add_argument("--panels", nargs="*", type=int, help="bare disse panelene (1-basert)")
+    p.add_argument("--exclude", nargs="*", default=[], help="figurer som ikke skal i bildet selv om avsnittet nevner dem")
+    p.add_argument("--size", help="størrelse per panel (standard portrait_size i prosjekt.ini, ellers 1024x1536)")
+    p.add_argument("--approve", nargs="*", type=int, help="godkjenn nyeste versjon av alle (eller gitte) paneler")
+    p.add_argument("--from-run", action="store_true", help="med --approve: ta panelene fra siste kjøring "
+                   "(en `new --panels`-kjøring eller en fix på den) i stedet for portrait/-mappa")
+    p.set_defaults(func=cmd_portrait)
 
     p = sub.add_parser("compose", help="legg header/kant på et vilkårlig bilde")
     p.add_argument("image")
