@@ -1153,13 +1153,18 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         state = load_state(draft)
         picks_path = draft.workdir / "picks.json"
         picked = json.loads(picks_path.read_text(encoding="utf-8")).get("picked") if picks_path.exists() else None
-        base = None
-        for r in reversed(state["runs"]):
-            if r.get("panels") and (not picked or any(Path(i.replace("\\", "/")).name == picked for i in r.get("images", []))):
-                base = r
-                break
-        if not base:
-            base = next((r for r in reversed(state["runs"]) if r.get("panels")), None)
+        # base: the newest panel run, unless the picked run is newer than it.
+        # A --only redo after the pick builds on the previous redo, not on
+        # the pick, so several redos add up instead of each starting over.
+        panel_runs = [(i, r) for i, r in enumerate(state["runs"]) if r.get("panels")]
+        base = panel_runs[-1][1] if panel_runs else None
+        if picked:
+            pi = next((i for i, r in enumerate(state["runs"])
+                       if any(Path(im.replace("\\", "/")).name == picked for im in r.get("images", []))), None)
+            if pi is not None and panel_runs and pi > panel_runs[-1][0] and state["runs"][pi].get("panels"):
+                base = state["runs"][pi]
+            # a picked run without panels (a stitched fix) falls back to the
+            # newest panel run; lift its panels there first if they matter
         if not base:
             die("--only trenger en tidligere --panels-kjøring")
         for k, q in enumerate(base["panels"], 1):
@@ -1293,14 +1298,18 @@ def cmd_approve(cp, args) -> None:
     draft = parse_draft(Path(args.draft))
     if portrait_project() and not args.image and not args.raw:
         # the picked run (picks.json), else the newest: its panels become paneler/<slug>/
+        # the picked run (picks.json), unless a newer run exists: a redo after
+        # the pick is what the owner approved, the pick is from before it
         picks_path = draft.workdir / "picks.json"
         picked = json.loads(picks_path.read_text(encoding="utf-8")).get("picked") if picks_path.exists() else None
         state = load_state(draft)
         if picked:
-            for i, r in enumerate(state["runs"]):
-                if any(Path(img.replace("\\", "/")).name == picked for img in r.get("images", [])):
-                    state["runs"] = state["runs"][: i + 1]
-                    break
+            idx = next((i for i, r in enumerate(state["runs"])
+                        if any(Path(img.replace("\\", "/")).name == picked for img in r.get("images", []))), None)
+            if idx is not None and idx < len(state["runs"]) - 1:
+                print(f"(picks.json peker på kjøring {idx + 1}, men det finnes {len(state['runs']) - idx - 1} nyere; tar siste)")
+            elif idx is not None:
+                state["runs"] = state["runs"][: idx + 1]
         return cut_panels_from_run(draft, state)
     if args.image:
         src = Path(args.image).resolve()
@@ -1506,6 +1515,8 @@ PICK_PAGE = """<!doctype html>
   .cell {{ position:relative; }}  .cell > img {{ display:block; width:100%; height:auto; }}
   .cell .clip {{ position:relative; width:100%; aspect-ratio:2/3; overflow:hidden; }}
   .cell .clip img {{ position:absolute; left:0; width:100%; }}
+  details.old {{ width:100%; margin-top:24px; color:var(--dim); }}
+  details.old summary {{ cursor:pointer; padding:6px 0; }}
   .pan {{ position:absolute; left:0; right:0; cursor:pointer; border:2px solid transparent; }}
   .pan:hover {{ border-color:var(--hi); background:rgba(212,162,78,.08); }}
   .pan.has {{ border-color:var(--hi); }}
@@ -1667,6 +1678,13 @@ def build_pick_page(draft: Draft, width: int = 420) -> tuple[str, Path]:
         panels = "".join(PICK_PANEL.format(img=p.name, n=n, top=round(100 * t / H, 2), h=round(100 * (b - t) / H, 2))
                          for n, (t, b) in enumerate(detect_panels(im), 1))
         runs.append(PICK_RUN.format(img=p.name, i=m["i"], kind=m["kind"], provider=m["provider"], time=m["time"], panels=panels))
+    # in a portrait project the landscape runs are history: panel runs first,
+    # the rest folded away under one heading
+    if portrait_project() and any('class="run panels"' in r for r in runs):
+        grids = [r for r in runs if 'class="run panels"' in r]
+        olds = [r for r in runs if 'class="run panels"' not in r]
+        runs = grids + ([f'<details class="old"><summary>{len(olds)} eldre kjøringer (liggende stripe)</summary>'
+                         f'<div class="runs">{"".join(olds)}</div></details>'] if olds else [])
     html = PICK_PAGE.format(title=f"{draft.stem}: velg og kommenter", slug=draft.stem, w=width, w3=3 * round(width * 0.55) + 24,
                             picks=PROJ.rel(picks_path), runs="".join(runs), state=json.dumps(picks, ensure_ascii=False))
     return html, picks_path
