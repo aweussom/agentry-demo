@@ -131,6 +131,9 @@ Satt opp i keys.ini, valgt med `-p`, standard i prosjekt.ini.
   (`karakterer/a-b.jpg`) velges automatisk når alle på kortet er med og
   teller som ett.
 - `--dry-run` på `new` og `fix` viser nøyaktig hva som sendes.
+- Kort på maks 1024 px på lengste side. Bildemodellen tar betalt per
+  piksel, ikke per byte: et kort på 1024×1536 kostet 1536 bildetokens,
+  det samme på 683×1024 kostet 704 (målt 2026-10-09).
 
 ## Andre kommandoer
 
