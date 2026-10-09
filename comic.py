@@ -1057,11 +1057,23 @@ def split_panels(body: str) -> tuple[str, list[tuple[int, str]]]:
     return pre, panels
 
 
+UTEN_RE = re.compile(r"\[uten:\s*([^\]]+)\]", re.I)
+
+
+def excluded_in(text: str) -> list[str]:
+    """Names listed in a `[uten: kona, saga]` marker in a panel paragraph:
+    mentioned in the text (a line says "kona"), but not in the picture."""
+    m = UTEN_RE.search(text)
+    return [n.strip().lower() for n in m.group(1).split(",") if n.strip()] if m else []
+
+
 def chars_in(text: str, characters: list[str]) -> list[str]:
-    """Established characters named in a panel paragraph, in draft order.
-    Falls back to all of them when none is named."""
+    """Established characters named in a panel paragraph, in draft order,
+    minus a `[uten: ...]` marker. A panel that names nobody gets no cards:
+    a card is an invitation, and a scene of cars with collars (015 panel 3)
+    got two dogs in the back seat when every card went along."""
     found = [c for c in characters if re.search(rf"\b{re.escape(c)}\b", text, re.I)]
-    return found or list(characters)
+    return [c for c in found if c not in excluded_in(text)]
 
 
 def stitch_panels(images: list[Path], width: int, gutter: int = 14, line: int = 3):
@@ -1121,7 +1133,9 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
             "the line it answers.\n\n"
             f"{canon}\n\n{refs}\n\n---\n\nThe strip, for context (do not draw the other panels). Fixed details "
             "stated here, such as clothes, props, text on things, colour rules and black-and-white panels, "
-            f"apply to this panel too:\n\n{pre}\n\nThis panel:\n\n{text}"
+            f"apply to this panel too:\n\n{pre}\n\nThis panel:\n\n{UTEN_RE.sub('', text).strip()}"
+            + "".join(f"\n\n{c.capitalize()} is NOT in this picture, only mentioned. Do not draw {c.capitalize()}."
+                      for c in excluded_in(text))
         )
 
     plan = []
@@ -1436,8 +1450,16 @@ def cmd_portrait(cp, args) -> None:
     if PROJ.get("header"):
         spans = spans[1:]
     pre, texts = split_panels(draft.body)
+    # a thin white line inside a panel (a wall, a sheet of paper) reads as a
+    # gutter; when there are more spans than paragraphs, merge across the
+    # narrowest gaps until the counts match
+    while texts and len(spans) > len(texts):
+        gaps = [spans[i + 1][0] - spans[i][1] for i in range(len(spans) - 1)]
+        i = gaps.index(min(gaps))
+        spans = spans[:i] + [(spans[i][0], spans[i + 1][1])] + spans[i + 2:]
     canon = read_canon(PROJ.canon_for(provider.type_name, provider.name), draft.characters)
     size = args.size or PROJ.get("portrait_size") or "1024x1536"
+    fallback = get_provider(cp, provider.opt("fallback")) if provider.opt("fallback") else None
     wanted = set(args.panels or range(1, len(spans) + 1))
     out.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1459,15 +1481,47 @@ def cmd_portrait(cp, args) -> None:
         if args.dry_run:
             continue
         t0 = dt.datetime.now()
-        res = provider._run(prompt, refs, 1, size)
-        if not res.images:
-            die(f"panel {n}: ingen bilder i svaret")
+        try:
+            res = provider._run(prompt, refs, 1, size)
+            if not res.images:
+                raise RuntimeError("ingen bilder i svaret")
+        except Exception as e:
+            if not fallback:
+                die(f"panel {n}: {e}")
+            print(f"    [{provider.name}] feilet ({str(e)[:120]}); prøver [{fallback.name}]", flush=True)
+            refs = fallback._cap_refs([src] + [q for _, q in cards], [])
+            res = fallback._run(prompt, refs, 1, size)
+            if not res.images:
+                die(f"panel {n}: ingen bilder fra {fallback.name} heller")
         data, ext = res.images[0]
         dst = out / f"{stamp}-panel-{n}.{ext}"
         dst.write_bytes(data)
         print(f"    -> {PROJ.rel(dst)}  {(dt.datetime.now() - t0).seconds} s", flush=True)
     if not args.dry_run:
-        print(f"Se over, så: comic.py portrait {PROJ.rel(draft.path)} --approve")
+        record_portrait_run(draft, out, provider)
+        print(f"Se over på pick-siden, så: comic.py approve {PROJ.rel(draft.path)}")
+
+
+def record_portrait_run(draft: Draft, out: Path, provider) -> Path | None:
+    """Stitch the newest version of every panel in generert/<slug>/portrait/
+    into one tall image and record it as a run with a `panels` list, so the
+    pick page shows the set as a grid and `approve` can cut it."""
+    import io
+
+    newest: dict[int, Path] = {}
+    for f in sorted(out.glob("*-panel-*.*")):
+        if f.suffix.lower() in IMAGE_EXTS:
+            newest[int(f.stem.rsplit("-", 1)[1])] = f
+    if len(newest) < 2:
+        return None
+    panels = [newest[n] for n in sorted(newest)]
+    strip = stitch_panels(panels, 1024)
+    buf = io.BytesIO()
+    strip.save(buf, format="PNG")
+    res = Result(images=[(buf.getvalue(), "png")], prompt="(portrait: panels redrawn from the approved strip)")
+    job = Job(draft=draft, canon="", cards=[], examples=[])
+    record(draft, provider, "new", job, res, extra={"panels": [PROJ.rel(p) for p in panels], "panel_size": "1024x1536"})
+    return panels[0]
 
 
 def cmd_compose(cp, args) -> None:
@@ -1551,7 +1605,7 @@ const stEl = document.getElementById("st");
 let timer = null;
 async function flush() {{
   try {{
-    const r = await fetch("/save", {{method:"POST", headers:{{"Content-Type":"application/json"}},
+    const r = await fetch("save", {{method:"POST", headers:{{"Content-Type":"application/json"}},
                                    body: JSON.stringify(state)}});
     if (!r.ok) throw new Error(r.status);
     stEl.textContent = "lagret " + new Date().toLocaleTimeString(); stEl.className = "st";
@@ -1651,7 +1705,9 @@ def build_pick_page(draft: Draft, width: int = 420) -> tuple[str, Path]:
     for r in state["runs"]:
         if r.get("panels"):
             for img in r.get("images", []):
-                panel_runs[Path(img.replace("\\", "/")).name] = [Path(q.replace("\\", "/")).name for q in r["panels"]]
+                # panel files may sit in a subfolder (portrait/); keep the path relative to the workdir
+                panel_runs[Path(img.replace("\\", "/")).name] = [
+                    PROJ.abs(q).resolve().relative_to(draft.workdir.resolve()).as_posix() for q in r["panels"]]
     picks_path = draft.workdir / "picks.json"
     picks = json.loads(picks_path.read_text(encoding="utf-8")) if picks_path.exists() else {}
     picks.setdefault("draft", PROJ.rel(draft.path))
@@ -1696,27 +1752,80 @@ def cmd_pick(cp, args) -> None:
     import threading
     import webbrowser
 
-    draft = parse_draft(Path(args.draft))
-    if not draft.workdir.exists():
-        die(f"Ingen kjøringer for {draft.stem} ennå.")
-    html, picks_path = build_pick_page(draft, args.width)
-    (draft.workdir / "pick.html").write_text(html, encoding="utf-8")
+    # One server for the whole project: / lists every draft with runs,
+    # /<NNN>/ is the pick page for the draft whose file name starts with
+    # NNN (000, 013, 1152), built on each request so new runs show up
+    # without a restart. A draft on the command line only picks which page
+    # the browser opens first.
+    def drafts_with_runs() -> dict[str, Draft]:
+        out = {}
+        for p in sorted(PROJ.utkast.glob("*.md")):
+            d = parse_draft(p)
+            if d.workdir.exists() and any(f.suffix.lower() in IMAGE_EXTS for f in d.workdir.iterdir()):
+                out[d.stem.split("-", 1)[0]] = d
+        return out
+
+    first = parse_draft(Path(args.draft)).stem.split("-", 1)[0] if args.draft else None
+    if first and first not in drafts_with_runs():
+        die(f"Ingen kjøringer for {args.draft} ennå.")
     port = args.port
     while _port_in_use(port):
         port += 1
-    folder = str(draft.workdir)
+    width = args.width
+
+    def index_html() -> str:
+        rows = []
+        for key, d in sorted(drafts_with_runs().items(), reverse=True):
+            picks = d.workdir / "picks.json"
+            state = json.loads(picks.read_text(encoding="utf-8")) if picks.exists() else {}
+            n_runs = len(load_state(d)["runs"])
+            mark = "valgt" if state.get("picked") else ""
+            approved = "paneler" if (PROJ.root / "paneler" / d.stem).exists() else ""
+            rows.append(f'<tr><td><a href="/{key}/">{key}</a></td><td><a href="/{key}/">{d.meta.get("tittel", d.stem)}</a></td>'
+                        f'<td>{n_runs}</td><td>{mark}</td><td>{approved}</td></tr>')
+        return ("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>"
+                f"<title>{PROJ.name}: velg</title><style>body{{margin:0;padding:16px 20px;background:#17181c;color:#e6e4df;"
+                "font:15px/1.5 system-ui,sans-serif}table{border-collapse:collapse}td{padding:6px 14px 6px 0;border-bottom:1px solid #3a3c45}"
+                "a{color:#d4a24e;text-decoration:none}th{text-align:left;color:#9b988f;font-weight:400;padding:0 14px 6px 0}</style>"
+                f"<h1 style='font-size:18px'>{PROJ.name}</h1><table><tr><th>nr</th><th>tittel</th><th>kjøringer</th><th></th><th></th></tr>"
+                + "".join(rows) + "</table>")
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **k):
-            super().__init__(*a, directory=folder, **k)
+            super().__init__(*a, directory=str(PROJ.generert), **k)
+
+        def _draft(self):
+            m = re.match(r"^/([^/]+)/(.*)$", self.path)
+            if not m:
+                return None, None
+            return drafts_with_runs().get(m.group(1)), m.group(2)
+
+        def _send(self, body: str, status: int = 200):
+            data = body.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_GET(self):
             if self.path in ("/", "/index.html"):
-                self.path = "/pick.html"
+                return self._send(index_html())
+            m = re.match(r"^/([^/]+)$", self.path)
+            if m and m.group(1) in drafts_with_runs():
+                self.send_response(301); self.send_header("Location", self.path + "/"); self.end_headers(); return
+            d, rest = self._draft()
+            if d is None:
+                return self.send_error(404)
+            if rest in ("", "index.html", "pick.html"):
+                html, _ = build_pick_page(d, width)
+                return self._send(html)
+            self.path = f"/{d.stem}/{rest}"          # static file from generert/<slug>/
             return super().do_GET()
 
         def do_POST(self):
-            if self.path != "/save":
+            d, rest = self._draft()
+            if d is None or rest != "save":
                 self.send_error(404); return
             n = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(n)
@@ -1725,16 +1834,19 @@ def cmd_pick(cp, args) -> None:
             except UnicodeDecodeError:
                 data = json.loads(raw.decode("latin-1"))
             data["saved"] = dt.datetime.now().isoformat(timespec="seconds")
-            picks_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            (d.workdir / "picks.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             self.send_response(204); self.end_headers()
 
         def log_message(self, fmt, *a):  # quiet
             pass
 
     socketserver.ThreadingTCPServer.allow_reuse_address = True
-    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler)
-    url = f"http://127.0.0.1:{port}/"
-    print(f"{url}  ({len(list(draft.workdir.glob('*.png')))} bilder; valg lagres i {PROJ.rel(picks_path)}; Ctrl-C avslutter)")
+    httpd = socketserver.ThreadingTCPServer((args.bind, port), Handler)
+    host = "127.0.0.1" if args.bind in ("127.0.0.1", "localhost") else args.bind
+    url = f"http://{host}:{port}/" + (f"{first}/" if first else "")
+    print(f"{url}  ({len(drafts_with_runs())} utkast med kjøringer; valg lagres i generert/<slug>/picks.json; Ctrl-C avslutter)")
+    if args.bind == "0.0.0.0":
+        print("Lytter på alle grensesnitt; fra mobilen over Tailscale: http://<tailscale-ip>:%d/" % port)
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
@@ -1836,9 +1948,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--crop-top", help="piksler å klippe fra toppen, eller 'auto'")
     p.set_defaults(func=cmd_compose)
 
-    p = sub.add_parser("pick", help="nettleserside: velg kjøring og kommenter paneler, lagres i picks.json")
-    p.add_argument("draft")
+    p = sub.add_parser("pick", help="nettleserside: velg kjøring og kommenter paneler, lagres i picks.json. "
+                       "Én server for hele prosjektet: / er lista, /<nr>/ er stripa")
+    p.add_argument("draft", nargs="?", help="utkast å åpne først (valgfritt; serveren viser alle)")
     p.add_argument("--port", type=int, default=8780)
+    p.add_argument("--bind", default="127.0.0.1", help="0.0.0.0 for å nå siden fra mobilen (Tailscale)")
     p.add_argument("--width", type=int, default=420, help="bredde per stripe i px")
     p.add_argument("--no-browser", action="store_true")
     p.set_defaults(func=cmd_pick)
