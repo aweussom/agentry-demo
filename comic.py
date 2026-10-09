@@ -1172,6 +1172,26 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         # the pick, so several redos add up instead of each starting over.
         panel_runs = [(i, r) for i, r in enumerate(state["runs"]) if r.get("panels")]
         base = panel_runs[-1][1] if panel_runs else None
+        # a `fix --panel` after the last panel run changed one panel inside the
+        # stitched image; lift every panel out of that image so the redo
+        # builds on the fixed version, not on the run before it
+        if base and panel_runs[-1][0] < len(state["runs"]) - 1:
+            last = state["runs"][-1]
+            if last.get("kind") == "fix" and last.get("images"):
+                from PIL import Image as _Image
+                im = _Image.open(PROJ.abs(last["images"][-1])).convert("RGB")
+                n_p, gutter, line = len(base["panels"]), 14, 3
+                ph = (im.height - gutter * (n_p - 1)) / n_p
+                lifted = []
+                stamp_fix = Path(last["images"][-1]).stem.split("-fix")[0]
+                for k in range(n_p):
+                    top = round(k * (ph + gutter))
+                    dst = draft.workdir / f"{stamp_fix}-panel-{k + 1}.png"
+                    if not dst.exists():
+                        im.crop((line, top + line, im.width - line, top + round(ph) - line)).save(dst)
+                    lifted.append(PROJ.rel(dst))
+                base = dict(base, panels=lifted)
+                print(f"base       : panelene løftet ut av {Path(last['images'][-1]).name} (siste fix)")
         if picked:
             pi = next((i for i, r in enumerate(state["runs"])
                        if any(Path(im.replace("\\", "/")).name == picked for im in r.get("images", []))), None)
@@ -1183,9 +1203,15 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
             die("--only trenger en tidligere --panels-kjøring")
         for k, q in enumerate(base["panels"], 1):
             base_panels[k] = PROJ.abs(q)
-        missing = [k for k in only if k not in base_panels]
+        # --insert N: panel N is new in the draft; what was N and after in the
+        # base run now sits one place further down
+        for k in sorted(getattr(args, "insert", None) or []):
+            base_panels = {(i + 1 if i >= k else i): q for i, q in base_panels.items()}
+        # a panel number beyond the base run is fine when the draft now has
+        # that many panels (a panel split in two): it is simply drawn new
+        missing = [k for k in only if k not in base_panels and k > len(plan)]
         if missing:
-            die(f"--only: panel {missing} finnes ikke i kjøringen ({len(base_panels)} paneler)")
+            die(f"--only: panel {missing} finnes verken i kjøringen ({len(base_panels)} paneler) eller i utkastet ({len(plan)})")
         print(f"only       : tegner {sorted(only)} på nytt, resten fra {Path(base['images'][-1]).name}")
 
     fallback = get_provider(cp, provider.opt("fallback")) if provider.opt("fallback") else None
@@ -1320,10 +1346,17 @@ def cmd_approve(cp, args) -> None:
         if picked:
             idx = next((i for i, r in enumerate(state["runs"])
                         if any(Path(img.replace("\\", "/")).name == picked for img in r.get("images", []))), None)
-            if idx is not None and idx < len(state["runs"]) - 1:
+            picks = json.loads(picks_path.read_text(encoding="utf-8"))
+            newer = idx is not None and idx < len(state["runs"]) - 1
+            # a pick saved AFTER the newest run was made is a deliberate choice
+            # of an older run (the owner saw the redos and went back)
+            picked_later = newer and (picks.get("saved") or "") > (state["runs"][-1].get("time") or "")
+            if newer and not picked_later:
                 print(f"(picks.json peker på kjøring {idx + 1}, men det finnes {len(state['runs']) - idx - 1} nyere; tar siste)")
             elif idx is not None:
                 state["runs"] = state["runs"][: idx + 1]
+                if picked_later:
+                    print(f"(valget er gjort etter de nyere kjøringene; tar kjøring {idx + 1} som valgt)")
         return cut_panels_from_run(draft, state)
     if args.image:
         src = Path(args.image).resolve()
@@ -1905,6 +1938,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--panels", action="store_true", help="ett kall per panel med kortene hver gang, panel 1 som stilreferanse, stiftet sammen med Pillow (for Grok)")
     p.add_argument("--only", nargs="*", type=int, help="med --panels: tegn bare disse panelene på nytt og behold "
                    "resten fra den valgte kjøringen (picks.json), ellers siste panelkjøring")
+    p.add_argument("--insert", nargs="*", type=int, help="med --only: disse panelnumrene er NYE i utkastet; "
+                   "panelene etter dem i forrige kjøring flyttes ett hakk ned (001: rådyrpanel skutt inn som 3)")
     p.add_argument("--chain", action="store_true", help="med --only: tegn panelene etter hverandre, hvert med "
                    "panelet foran som referanse (to svart-hvitt-paneler med samme biler)")
     p.add_argument("--background", action="store_true", help="med --panels: tegn først det tomme stedet fra "

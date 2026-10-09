@@ -1,9 +1,8 @@
 # xkcd, redrawn: project rules
 
 This folder lives in two places: as `prosjekter/xkcd/` in the private tool
-repo (konaogco), where the tool's own rules are at the root (`AGENTS.md`,
-`TODONT.md`, `STATUS.md`), and as a mirrored copy in the public
-`agentry-demo` repo, where the README is the guide. Edit the konaogco copy;
+repo (konaogco), and as a mirrored copy in the public `agentry-demo`
+repo. The tool's rules are `AGENTS.md` at the repo root. Edit the konaogco copy;
 `sync_demo.py` pushes it over. This file is what applies only to this
 project. Cast and writing notes in CANON.md, image rules in VISUAL_CANON.md,
 IMAGE_CANON.md and IMAGE_CANON_GROK.md, sources and credits in SOURCES.md.
