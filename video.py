@@ -41,14 +41,18 @@ sys.path.insert(0, str(ROOT))
 import comic  # noqa: E402
 from comic import _port_in_use  # noqa: E402
 
-FIELDS = {"personer", "rom", "svart-hvitt", "replikk", "tekst", "varighet", "bilde", "bevegelse"}
+FIELDS = {"personer", "rom", "svart-hvitt", "replikk", "tekst", "varighet", "bilde", "bevegelse", "zoom", "kamera"}
 DOGS = {"missy", "saga"}
 ROOM_EN = {"kjokken": "kitchen", "bad": "bathroom", "stue": "living room", "gang": "hallway",
-           "soverom": "bedroom", "kontor": "office", "serverrom": "server room"}
+           "soverom": "bedroom", "kontor": "office", "serverrom": "server room",
+           "skogsvei": "forest road",
+           "trapp": "front steps outside the house"}
 HEAD = (
     "Vertical 2:3 key frame for an animated short: one single full-bleed image, no "
     "panels, no borders, no speech bubbles, no thought bubbles, no captions, no labels. "
-    "Polished modern 3D cartoon webcomic style, warm light, expressive faces. "
+    "Stylised modern 3D animated-film look exactly like the character cards: smooth "
+    "simplified shapes, large expressive eyes, soft skin with no pores, warm light. "
+    "NOT photorealistic: if it could pass for a photograph, it is wrong. "
     "The reference images are character cards: use them only for identity, and "
     "draw no text from them. Only the characters named below are in the image."
 )
@@ -194,7 +198,7 @@ def keyframe_request(film: Film, shot: dict) -> tuple[list[Path], str]:
             desc.append(f"{d}; {extra}" if d and extra else d or extra)
     if desc:
         parts.append("Characters: " + " | ".join(desc) + ".")
-    if DOGS & set(people) and film.v.get("skala"):
+    if DOGS & set(people) and film.v.get("skala") and film.front.get("skala", "").lower() != "nei":
         parts.append(film.v["skala"])
     tpl = film.asset("svart_hvitt_mal") if shot["bw"] else None
     room = film.asset(f"rom_{shot.get('rom', '')}") if shot.get("rom") else None
@@ -437,12 +441,29 @@ def duration(p: Path) -> float:
     return float(r.stdout.strip() or 0)
 
 
-def still(img: Path, secs: float, out: Path) -> None:
-    """Slow push-in on a still: 5 percent over the shot."""
+def still(img: Path, secs: float, out: Path, zoom: str = "", kamera: str = "") -> None:
+    """Camera move on a still, cosine-eased. Default: 5 percent push-in
+    toward the middle. `zoom` is the script's Zoom field, "percent [x y]":
+    "40 0.56 0.72" zooms 40 percent in on a point given as fractions of
+    width and height. `kamera` is the Kamera field, "z x y > z x y": zoom
+    factor and centre at the start and at the end, so "1.4 0.3 0.7 > 1.4
+    0.7 0.5" pans across the image at 1.4x (Ken Burns)."""
     n = max(1, round(secs * FPS))
+    e = f"(0.5-0.5*cos(PI*on/{n}))"
+    if kamera:
+        a, b = ([float(x) for x in side.split()] for side in kamera.split(">"))
+        zexpr = f"({a[0]}+({b[0]}-{a[0]})*{e})"
+        xc, yc = f"({a[1]}+({b[1]}-{a[1]})*{e})", f"({a[2]}+({b[2]}-{a[2]})*{e})"
+    else:
+        z = (zoom or "5").split()
+        pct, cx, cy = float(z[0]) / 100, float(z[1]) if len(z) > 2 else 0.5, float(z[2]) if len(z) > 2 else 0.5
+        zexpr = f"(1+{pct}*{e})"
+        xc, yc = f"(0.5+({cx}-0.5)*{e})", f"(0.5+({cy}-0.5)*{e})"
     ffmpeg("-loop", "1", "-i", str(img), "-vf",
            f"scale={W * 2}:{H * 2}:force_original_aspect_ratio=increase,crop={W * 2}:{H * 2},"
-           f"zoompan=z='1+0.05*on/{n}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={n}:s={W}x{H}:fps={FPS},setsar=1",
+           f"zoompan=z='{zexpr}':"
+           f"x='max(0,min(iw-iw/zoom,iw*{xc}-iw/zoom/2))':y='max(0,min(ih-ih/zoom,ih*{yc}-ih/zoom/2))':"
+           f"d={n}:s={W}x{H}:fps={FPS},setsar=1",
            "-frames:v", str(n), *enc(out))
 
 
@@ -514,11 +535,11 @@ def cmd_film(args) -> None:
             die(f"skudd {s['n']} har ingen key frame; kjør keyframes først")
         out = parts_dir / f"s{s['n']:02d}.mp4"
         clip = film.clip_for(kf)
-        if clip.exists():
+        if s.get("bevegelse") and clip.exists():
             ffmpeg("-ss", "0.6", "-t", str(s["seconds"]), "-i", str(clip), "-vf", VF, *enc(out))
             used.append(f"{s['n']}: {clip.name}")
         else:
-            still(kf, s["seconds"], out)
+            still(kf, s["seconds"], out, s.get("zoom", ""), s.get("kamera", ""))
             used.append(f"{s['n']}: {kf.name} (stillbilde)")
         texts = ([f"{s['speaker']}: «{s['line']}»"] if s["line"] else []) + ([s["tekst"]] if s.get("tekst") else [])
         for text in texts:
@@ -657,7 +678,7 @@ document.getElementById("export").onclick = () => {{
 document.getElementById("done").onclick = async () => {{
   state.done = new Date().toISOString(); clearTimeout(timer); await flush();
   const v = Object.values(state.shots);
-  const ok = v.filter(s => s.ok).length, com = v.filter(s => !s.ok && s.comment).length;
+  const ok = v.filter(s => s.ok).length, com = v.filter(s => (s.comment || "").trim()).length;
   const nx = document.getElementById("next"); nx.style.display = "block";
   nx.textContent = (stEl.className.includes("err")
     ? "Serveren svarer ikke. Trykk Eksporter JSON og gi fila til assistenten. "
@@ -751,8 +772,8 @@ def cmd_review(args) -> None:
             pass
 
     socketserver.ThreadingTCPServer.allow_reuse_address = True
-    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler)
-    url = f"http://127.0.0.1:{port}/"
+    httpd = socketserver.ThreadingTCPServer((args.bind, port), Handler)
+    url = f"http://{'127.0.0.1' if args.bind in ('127.0.0.1', '0.0.0.0') else args.bind}:{port}/"
     print(f"{url}  ({len(shots)} skudd; lagres i {film.proj.rel(out)}; Ctrl-C avslutter)", flush=True)
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
@@ -782,6 +803,7 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8781)
     p.add_argument("--width", type=int, default=260, help="minste kortbredde i px")
     p.add_argument("--no-browser", action="store_true")
+    p.add_argument("--bind", default="127.0.0.1", help="0.0.0.0 for å nå siden fra mobilen")
     p = sub.add_parser("film", help="sett sammen intro, skudd (klipp eller stillbilde med zoom) og outro")
     p.add_argument("manus")
     p = sub.add_parser("felles", help="bygg intro.mp4 og outro.mp4 fra plakat, outro-bilde og outro_tekst")
