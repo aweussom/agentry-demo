@@ -177,7 +177,8 @@ Satt opp i keys.ini, valgt med `-p`, standard i prosjekt.ini.
   kreditteringslinje under bildet.
 - `comic.py rom <navn> "..."` / `--fra <bilde>`: tomt rom til
   `assets/rom-<navn>.jpg`, se romkort over.
-- `comic.py kort <navn> "..."`: character card fra en beskrivelse til
-  `karakterer/<navn>.jpg`. Navnet er ett ord, slik det står i panelteksten.
+- `comic.py kort <navn> "..." --stil karakterer/<kort>.jpg`: character
+  card fra en beskrivelse til `karakterer/<navn>.jpg`, med oppsett og strek
+  fra `--stil`. Navnet er ett ord, slik det står i panelteksten.
 - `comic.py providers`: hva som er satt opp.
 - `video.py`: film fra et skuddmanus, se prosjektets `video/`.

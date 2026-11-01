@@ -1454,8 +1454,8 @@ def cmd_rom(cp, args) -> None:
 
 
 def cmd_kort(cp, args) -> None:
-    """Draw a character card from a description: one figure, whole, neutral
-    face, plain background, in the project's style. For someone who will not
+    """Draw a character card from a description, as a reference sheet laid
+    out and drawn like an existing card in karakterer/. For someone who will not
     make cards in another tool; a joke series needs a new priest every week.
     Rules for a card are in karakterer/README.md in the example project."""
     navn = args.navn.strip().lower()
@@ -1472,17 +1472,38 @@ def cmd_kort(cp, args) -> None:
     provider = get_provider(cp, args.provider)
     canon_files = split_list(getattr(args, "canon", None) or "") or PROJ.canon_for(provider.type_name, provider.name)
     style_canon = read_canon(canon_files, [])
+    # The new card is drawn as a sibling of an existing one: same sheet layout,
+    # same drawing style. From text alone codex drew a single photoreal figure
+    # next to cartoon reference sheets (2026-11-01, the brother's test).
+    if args.stil:
+        stil = Path(args.stil)
+        if not stil.exists():
+            stil = PROJ.root / args.stil
+        if not stil.exists():
+            die(f"--stil: finner ikke {args.stil}")
+    else:
+        singles = sorted(q for q in PROJ.karakterer.iterdir()
+                         if q.suffix.lower() in IMAGE_EXTS and "-" not in q.stem)
+        if not singles:
+            die(f"kort: ingen kort i {PROJ.rel(PROJ.karakterer)} å ta stilen fra; gi et bilde med --stil")
+        stil = singles[0]
+    # "prøv igjen" gives kameraten2; the 2 is a file version, not part of the name on the sheet
+    heading = navn.rstrip("0123456789").upper() or navn.upper()
     prompt = (
-        "A character reference card for a comic, as ONE single portrait image: ONE figure, the whole body "
-        "from head to shoes, standing in a three-quarter view, arms relaxed, a calm neutral face (not "
-        "smiling), on a plain light background with nothing else. No text, no name, no speech bubble, no "
-        "panel border, no second view of the figure. Give the figure one clear, fixed colour on its clothes "
-        "that can be recognised from a distance."
-        f"\n\n{style_canon}\n\n---\n\nThe figure:\n\n{beskrivelse}"
+        "The reference image is an existing character reference sheet from this comic. Draw a reference "
+        "sheet for a NEW character, as ONE portrait image, in exactly the same layout, lettering and "
+        "drawing style as the reference: the same kind of line, colouring, shading and proportions, the "
+        "same light paper background, the same arrangement of views (name at the top, full body, face "
+        "close-up, side view, back view, a row of facial expressions with short labels, and whatever "
+        "else the reference sheet has). Do NOT draw the character from the reference; only its style and "
+        f"layout. Letter the name as \"{heading}\". Short labels in Norwegian. The figure keeps the same "
+        "clothes and colours in every view."
+        f"\n\n{style_canon}\n\n---\n\nThe new character:\n\n{beskrivelse}"
     )
     size = "1024x1536"
     print(f"== kort {navn}")
     print(f"provider   : [{provider.name}] {provider.describe()}")
+    print(f"stil fra   : {PROJ.rel(stil)}")
     print(f"ut         : {PROJ.rel(out)}  (størrelse {size}, krympes til 1024 px høy)")
     if args.dry_run:
         print("prompt:")
@@ -1491,7 +1512,7 @@ def cmd_kort(cp, args) -> None:
         return
     print(f"tegner kortet, venter ett bilde fra [{provider.name}]", flush=True)
     t0 = dt.datetime.now()
-    res = provider._run(prompt, [], 1, size)
+    res = provider._run(prompt, [stil], 1, size)
     if not res.images:
         die(f"kort: ingen bilder i svaret fra [{provider.name}]")
     data, ext = res.images[0]
@@ -2158,6 +2179,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("kort", parents=[common], help="tegn et character card fra en beskrivelse til karakterer/<navn>.jpg")
     p.add_argument("navn", help="ett ord uten æøå, slik det står i panelteksten: presten, johansen")
     p.add_argument("beskrivelse", help="alder, kropp, hår, ansikt, klær med farger")
+    p.add_argument("--stil", help="kortet som gir oppsett og tegnestil (standard: første enkeltkort i karakterer/)")
     p.set_defaults(func=cmd_kort)
 
     p = sub.add_parser("approve", help="legg på header/kant og lagre siste (eller gitt) bilde i striper/")
