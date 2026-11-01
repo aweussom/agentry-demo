@@ -1151,7 +1151,7 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
     }
 
     def prompt_for(n: int, text: str, chars: list[str], style_kind: str | None,
-                   room: tuple[str, Path] | None = None) -> str:
+                   room: tuple[str, Path] | None = None, example_sent: bool = False) -> str:
         names = ", ".join(chars)
         canon = read_canon(job.canon_files, chars)
         refs = f"Reference images, in order: character cards for {names}"
@@ -1174,6 +1174,10 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
                      "place and the same vehicles and objects.")
         else:
             refs += "."
+        if example_sent:
+            refs += (" Last, a panel from another finished strip of this series: draw this panel in exactly "
+                     "its style, its line work, its colours and light and its way of drawing faces. Do NOT "
+                     "copy its place, its poses or its text.")
         return (
             f"Draw ONLY panel {n} of {m} of a comic strip, as ONE single {orientation} image, "
             f"{panel_width} pixels wide by {panel_height} pixels tall, that fills "
@@ -1205,11 +1209,17 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         if rooms[n]:
             ref = f" + rom {rooms[n][0]} ({PROJ.rel(rooms[n][1])})" + ("" if use_bg else ref)
         print(f"  panel {n}: cards {', '.join(p.name for _, p in cards)}{ref}")
+    if job.examples:
+        print(f"examples   : {', '.join(PROJ.rel(e) for e in job.examples)} (sist; droppes først ved max_refs)")
     if args.dry_run:
         dry = plan[1] if len(plan) > 1 else plan[0]
         dry_kind = None if dry is plan[0] else ("bg" if use_bg else "panel1")
         print(f"prompt for panel {dry[0]}:")
-        for line in prompt_for(dry[0], dry[1], dry[2], dry_kind, rooms[dry[0]]).splitlines():
+        dry_must = [q for _, q in dry[3]] + ([rooms[dry[0]][1]] if rooms[dry[0]] else [])
+        dry_style = [Path("panel-1")] if dry_kind else []
+        dry_refs = provider._cap_refs(dry_must, dry_style + list(job.examples))
+        dry_example = any(e in dry_refs for e in job.examples)
+        for line in prompt_for(dry[0], dry[1], dry[2], dry_kind, rooms[dry[0]], dry_example).splitlines():
             print("  " + line)
         return
 
@@ -1279,11 +1289,14 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         # a room card is the place; the --background image would be a second, different one
         if room and style_kind == "bg":
             style = None
-        refs = provider._cap_refs(must, [style] if style else [])
+        # examples (--examples / examples=) go last: max_refs drops them before the style panel
+        optional = ([style] if style else []) + list(job.examples)
+        refs = provider._cap_refs(must, optional)
         # the prompt names only the images actually sent; max_refs may have dropped the style panel
         sent_kind = style_kind if style and style in refs else None
+        example_sent = any(e in refs for e in job.examples)
         t0 = dt.datetime.now()
-        prompt = prompt_for(n, text, chars, sent_kind, room)
+        prompt = prompt_for(n, text, chars, sent_kind, room, example_sent)
         try:
             res = provider._run(prompt, refs, 1, size)
             if not res.images:
@@ -1292,9 +1305,10 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
             if not fallback:
                 die(f"panel {n}: {e}")
             print(f"  panel {n}: [{provider.name}] feilet ({str(e)[:120]}); prøver [{fallback.name}]", flush=True)
-            refs = fallback._cap_refs(must, [style] if style else [])
+            refs = fallback._cap_refs(must, optional)
             sent_kind = style_kind if style and style in refs else None
-            prompt = prompt_for(n, text, chars, sent_kind, room)
+            example_sent = any(e in refs for e in job.examples)
+            prompt = prompt_for(n, text, chars, sent_kind, room, example_sent)
             res = fallback._run(prompt, refs, 1, size)
             if not res.images:
                 die(f"panel {n}: ingen bilder fra {fallback.name} heller")
