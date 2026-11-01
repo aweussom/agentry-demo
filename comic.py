@@ -1691,6 +1691,26 @@ def cut_panels_from_run(draft: Draft, state: dict, wanted: set[int] | None = Non
         panel.save(dst, quality=90, optimize=True)
         print(f"{PROJ.rel(dst)}  <- {src_img.name} panel {n}")
 
+    # samlet = ja: also all panels in one tall image, beside the folder, so it is never posted by mistake as panel N+1
+    if (PROJ.get("samlet") or "").lower() not in ("ja", "yes", "true", "1"):
+        return
+    panel_files = [approved / f"{n}.jpg" for n in range(1, len(spans) + 1)]
+    missing_panels = [q.name for q in panel_files if not q.exists()]
+    if missing_panels:
+        print(f"samlet     : hopper over, mangler {', '.join(missing_panels)} i {PROJ.rel(approved)}")
+        return
+    print(f"samlet     : limer {len(panel_files)} paneler til ett høyt bilde, 12 px hvitt mellom")
+    tiles = [Image.open(q).convert("RGB") for q in panel_files]
+    gap = 12
+    tall = Image.new("RGB", (max(t.width for t in tiles), sum(t.height for t in tiles) + gap * (len(tiles) - 1)), "white")
+    y = 0
+    for tile in tiles:
+        tall.paste(tile, (0, y))
+        y += tile.height + gap
+    tall_dst = approved.parent / f"{draft.stem}-samlet.jpg"
+    tall.save(tall_dst, quality=90, optimize=True)
+    print(f"{PROJ.rel(tall_dst)}  {tall.width}x{tall.height}")
+
 
 def cmd_portrait(cp, args) -> None:
     from PIL import Image

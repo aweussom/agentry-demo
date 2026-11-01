@@ -46,7 +46,9 @@ rekkefølgen.
 Størrelsen er `panel_size` i prosjekt.ini (standard 1024x1536). Modellen
 svarer ofte i en størrelse i nærheten; originalen ligger i
 `generert/<slug>/raw/`, og panelet skaleres til `panel_size` (beskjæres
-om forholdet er et annet, og det står i loggen).
+om forholdet er et annet, og det står i loggen). Med `samlet = ja` lager
+`approve` også `paneler/<slug>-samlet.jpg`, alle panelene i ett høyt
+bilde, ved siden av mappa så det ikke legges ut som et panel til.
 
 ## Utkastet
 

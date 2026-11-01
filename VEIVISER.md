@@ -127,7 +127,9 @@ Når eieren sier fra, les `generert/<slug>/picks.json`.
 - Valgt uten kommentarer, eller eieren sier "godkjenn": `approve`, sett
   `status: godkjent <dato>` i utkastet, og skriv hele stien til mappa
   `prosjekter\<prosjekt>\paneler\<slug>` alene på en linje. Si: "Bildene er
-  nummerert. Legg dem ut i den rekkefølgen."
+  nummerert. Legg dem ut i den rekkefølgen." Står `samlet = ja` i
+  prosjekt.ini, finnes også `paneler\<slug>-samlet.jpg` med alle panelene
+  i ett høyt bilde; skriv den stien også.
 
 Feil i et rom (nye gardiner, ny lampe) rettes med romkortet, ikke ved å
 beskrive rommet i avsnittet. Har to rettinger feilet på samme panel, tegn
