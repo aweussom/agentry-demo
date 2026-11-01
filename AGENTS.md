@@ -43,6 +43,11 @@ comic.py approve <utkast>      # kutter valgt kjøring til paneler/<slug>/N.jpg
 `paneler/<slug>/1.jpg, 2.jpg ...` er det eieren legger ut, i den
 rekkefølgen.
 
+Størrelsen er `panel_size` i prosjekt.ini (standard 1024x1536). Modellen
+svarer ofte i en størrelse i nærheten; originalen ligger i
+`generert/<slug>/raw/`, og panelet skaleres til `panel_size` (beskjæres
+om forholdet er et annet, og det står i loggen).
+
 ## Utkastet
 
 - Fil `prosjekter/<navn>/utkast/NNN-slug.md` med frontmatter `tittel`,

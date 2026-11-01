@@ -54,8 +54,10 @@ Skriv opp hvem som er med. For hver figur:
   samme oppsett (navn, helfigur, nærbilde, profil, rygg, uttrykk) og samme
   strek? Ser det ut som et foto, eller er det bare én figur: tegn på nytt
   (`<navn>2`) uten å spørre eieren.
-- Vis kortet: prøv `Invoke-Item <full sti>`. Stopper sandkassa det, skriv
-  hele stien alene på en linje, så eieren kan Ctrl+klikke den. Spør "1 bra,
+- Vis kortet: skriv hele stien alene på en linje, så eieren kan
+  Ctrl+klikke den. Ikke stol på `Invoke-Item` eller `Start-Process`: i
+  Tommys test 2026-11-01 gikk kommandoen gjennom uten at noe åpnet seg
+  for eieren. Spør "1 bra,
   2 prøv igjen, 3 endre noe". Prøv igjen = nytt navn (`presten2`),
   ingenting overskrives. Bruk det nye navnet i utkastet.
 - Navnet er ett ord uten æøå, og det er ordet du bruker i panelteksten:
@@ -109,7 +111,9 @@ rom uten kort, eller feil antall paneler: rett det før du går videre.
 
 Si: "Jeg tegner nå. Det tar noen minutter." Kjør `new <utkast>`.
 
-Start velgeren i bakgrunnen (`comic.py pick`) og gi eieren adressen. Si:
+Start velgeren i bakgrunnen (`comic.py pick`) og gi eieren adressen
+alene på en linje, `http://127.0.0.1:8780/<nr>/`; eieren åpner den selv.
+Svarer det alt på porten fra en tidligere økt, bruk den. Si:
 "Klikk på et panel for å si hva som er galt. Trykk 'Velg denne' når du er
 fornøyd. Si fra her når du er ferdig."
 
@@ -121,9 +125,8 @@ Når eieren sier fra, les `generert/<slug>/picks.json`.
   utkastet, og tegn bare de panelene på nytt (`new <utkast> --only 3`).
   Si hva du endret i én setning. Tilbake til steg 7.
 - Valgt uten kommentarer, eller eieren sier "godkjenn": `approve`, sett
-  `status: godkjent <dato>` i utkastet, og åpne mappa
-  `prosjekter\<prosjekt>\paneler\<slug>` med `Invoke-Item` (eller skriv
-  hele stien om sandkassa stopper det). Si: "Bildene er
+  `status: godkjent <dato>` i utkastet, og skriv hele stien til mappa
+  `prosjekter\<prosjekt>\paneler\<slug>` alene på en linje. Si: "Bildene er
   nummerert. Legg dem ut i den rekkefølgen."
 
 Feil i et rom (nye gardiner, ny lampe) rettes med romkortet, ikke ved å

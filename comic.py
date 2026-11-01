@@ -1131,7 +1131,15 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         die(f"--panels: fant {len(panels)} 'Panel N:'-avsnitt i utkastet; trenger minst to")
     m = len(panels)
     size = getattr(args, "panel_size", None) or PROJ.get("panel_size") or provider.opt("panel_size") or "1536x1024"
-    width = int((provider.opt("size") or "1024x1536").split("x")[0])
+    panel_width, panel_height = map(int, size.lower().split("x"))
+    # the stitched strip is panel_width plus the two 3 px borders, so approve cuts panels at full size
+    width = panel_width + 6
+    if panel_height > panel_width:
+        orientation = "portrait"
+    elif panel_width > panel_height:
+        orientation = "landscape"
+    else:
+        orientation = "square"
 
     use_bg = bool(getattr(args, "background", False))
 
@@ -1167,7 +1175,8 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         else:
             refs += "."
         return (
-            f"Draw ONLY panel {n} of {m} of a comic strip, as ONE single landscape image that fills "
+            f"Draw ONLY panel {n} of {m} of a comic strip, as ONE single {orientation} image, "
+            f"{panel_width} pixels wide by {panel_height} pixels tall, that fills "
             "the whole picture edge to edge: no panel border, no gutters, no other panels, no title. "
             "Any instruction below about stacking several panels does not apply to this image. "
             "Speech bubbles are read top to bottom, then left to right: the line spoken FIRST sits "
@@ -1291,7 +1300,23 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
                 die(f"panel {n}: ingen bilder fra {fallback.name} heller")
         data, ext = res.images[0]
         out = draft.workdir / f"{stamp}-panel-{n}.{ext}"
-        out.write_bytes(data)
+        # the model's own image is kept as received; in raw/, because pick lists every image in workdir as a run
+        raw_dir = draft.workdir / "raw"
+        raw_dir.mkdir(exist_ok=True)
+        raw = raw_dir / f"{stamp}-panel-{n}.{ext}"
+        raw.write_bytes(data)
+        # subscription providers pick a nearby native size; the panel is fitted to the asked size
+        from PIL import Image, ImageOps
+        with Image.open(raw) as source:
+            got_w, got_h = source.size
+            if (got_w, got_h) == (panel_width, panel_height):
+                out.write_bytes(data)
+            else:
+                cut = "beskjæres" if abs(got_w / got_h - panel_width / panel_height) > 0.01 else "skaleres"
+                print(f"  panel {n}: fikk {got_w}x{got_h}, ba om {size}; {cut} (originalen i raw/)", flush=True)
+                fitted = ImageOps.fit(source.convert("RGB"), (panel_width, panel_height),
+                                      method=Image.Resampling.LANCZOS)
+                fitted.save(out)
         print(f"  panel {n}: {PROJ.rel(out)}  {(dt.datetime.now() - t0).seconds} s", flush=True)
         return out
 
