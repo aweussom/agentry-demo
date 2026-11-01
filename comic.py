@@ -4,6 +4,7 @@
     comic.py new  utkast/001-radyr.md [-p PROVIDER] [-n N] [--no-examples]
     comic.py fix  utkast/001-radyr.md "Missy er for fluffy." [-p PROVIDER]
     comic.py approve utkast/001-radyr.md [IMAGE]
+    comic.py rom kjokken "lyse gule vegger, rutete gardiner"   # tomt rom, [rom: kjokken] i et panel
     comic.py providers
 
 Config lives in keys.ini (see keys.ini.template). Output goes to
@@ -1067,6 +1068,28 @@ def excluded_in(text: str) -> list[str]:
     return [n.strip().lower() for n in m.group(1).split(",") if n.strip()] if m else []
 
 
+ROM_RE = re.compile(r"\[rom:\s*([^\]]+)\]", re.I)
+
+
+def rom_in(text: str) -> tuple[str, Path] | None:
+    """The room card for a panel: `[rom: kjokken]` in the paragraph means the
+    image at `rom_kjokken =` in prosjekt.ini is sent as the place. Each panel
+    is drawn on its own, so without a fixed picture of the room the model
+    furnishes it anew every time (curtains, walls, lamp, table cloth)."""
+    m = ROM_RE.search(text)
+    if not m:
+        return None
+    name = m.group(1).strip().lower()
+    rel = PROJ.get(f"rom_{name}")
+    if not rel:
+        die(f"[rom: {name}] i utkastet, men ingen rom_{name} = ... i {PROJ.root / 'prosjekt.ini'}. "
+            f"Lag kortet med: comic.py rom {name} \"beskrivelse av rommet\"")
+    path = PROJ.root / rel
+    if not path.exists():
+        die(f"rom_{name} = {rel} i prosjekt.ini, men fila finnes ikke: {path}")
+    return name, path
+
+
 def chars_in(text: str, characters: list[str]) -> list[str]:
     """Established characters named in a panel paragraph, in draft order,
     minus a `[uten: ...]` marker. A panel that names nobody gets no cards:
@@ -1112,16 +1135,35 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
 
     use_bg = bool(getattr(args, "background", False))
 
-    def prompt_for(n: int, text: str, chars: list[str], with_style: bool) -> str:
+    # style_kind says what the extra reference image is, so the prompt names
+    # it right: "panel1" (the default), "prev" (--chain), "bg" (--background)
+    STYLE_WORDS = {
+        "panel1": "panel 1 of this same strip, already drawn",
+        "prev": "the panel just before this one in the same strip",
+    }
+
+    def prompt_for(n: int, text: str, chars: list[str], style_kind: str | None,
+                   room: tuple[str, Path] | None = None) -> str:
         names = ", ".join(chars)
         canon = read_canon(job.canon_files, chars)
         refs = f"Reference images, in order: character cards for {names}"
-        if with_style and use_bg:
+        if room:
+            refs += (f", then the EMPTY room '{room[0]}' of this strip with nobody in it: this panel happens "
+                     "in exactly that room, with the same walls, windows, curtains, furniture, lamps and "
+                     "colours. It fixes the place, not the camera: frame the panel as the text below asks, "
+                     "and add only the characters named above")
+            if style_kind in STYLE_WORDS:
+                refs += (f", then {STYLE_WORDS[style_kind]}: match its drawing style, colours and how the "
+                         "characters look and are dressed. It may show another place; the room image decides "
+                         "the place.")
+            else:
+                refs += "."
+        elif style_kind == "bg":
             refs += (", then the EMPTY setting of this strip with nobody in it: draw this panel in "
                      "that exact place, style and light, adding only the characters named above.")
-        elif with_style:
-            refs += (", then a finished panel of this same strip, the one just before this one: match its "
-                     "drawing style, colours, light, the same place and the same vehicles and objects.")
+        elif style_kind in STYLE_WORDS:
+            refs += (f", then {STYLE_WORDS[style_kind]}: match its drawing style, colours, light, the same "
+                     "place and the same vehicles and objects.")
         else:
             refs += "."
         return (
@@ -1133,15 +1175,17 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
             "the line it answers.\n\n"
             f"{canon}\n\n{refs}\n\n---\n\nThe strip, for context (do not draw the other panels). Fixed details "
             "stated here, such as clothes, props, text on things, colour rules and black-and-white panels, "
-            f"apply to this panel too:\n\n{pre}\n\nThis panel:\n\n{UTEN_RE.sub('', text).strip()}"
+            f"apply to this panel too:\n\n{pre}\n\nThis panel:\n\n{ROM_RE.sub('', UTEN_RE.sub('', text)).strip()}"
             + "".join(f"\n\n{c.capitalize()} is NOT in this picture, only mentioned. Do not draw {c.capitalize()}."
                       for c in excluded_in(text))
         )
 
     plan = []
+    rooms: dict[int, tuple[str, Path] | None] = {}
     for n, text in panels:
         chars = chars_in(text, draft.characters)
         plan.append((n, text, chars, select_cards(chars)))
+        rooms[n] = rom_in(text)
     print(f"== new --panels: {draft.stem}")
     print(f"provider   : [{provider.name}] {provider.describe()}")
     print(f"panels     : {m}, size {size} each, stitched to {width} px wide")
@@ -1149,10 +1193,14 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         print("  background: empty setting from the preamble, text only, sent to every panel")
     for n, text, chars, cards in plan:
         ref = " + background" if use_bg else ("" if n == plan[0][0] else " + panel 1")
+        if rooms[n]:
+            ref = f" + rom {rooms[n][0]} ({PROJ.rel(rooms[n][1])})" + ("" if use_bg else ref)
         print(f"  panel {n}: cards {', '.join(p.name for _, p in cards)}{ref}")
     if args.dry_run:
-        print("prompt for panel 1:")
-        for line in prompt_for(plan[0][0], plan[0][1], plan[0][2], False).splitlines():
+        dry = plan[1] if len(plan) > 1 else plan[0]
+        dry_kind = None if dry is plan[0] else ("bg" if use_bg else "panel1")
+        print(f"prompt for panel {dry[0]}:")
+        for line in prompt_for(dry[0], dry[1], dry[2], dry_kind, rooms[dry[0]]).splitlines():
             print("  " + line)
         return
 
@@ -1216,10 +1264,17 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
 
     fallback = get_provider(cp, provider.opt("fallback")) if provider.opt("fallback") else None
 
-    def run_one(n, text, chars, cards, style):
-        refs = provider._cap_refs([p for _, p in cards], [style] if style else [])
+    def run_one(n, text, chars, cards, style, style_kind):
+        room = rooms[n]
+        must = [p for _, p in cards] + ([room[1]] if room else [])
+        # a room card is the place; the --background image would be a second, different one
+        if room and style_kind == "bg":
+            style = None
+        refs = provider._cap_refs(must, [style] if style else [])
+        # the prompt names only the images actually sent; max_refs may have dropped the style panel
+        sent_kind = style_kind if style and style in refs else None
         t0 = dt.datetime.now()
-        prompt = prompt_for(n, text, chars, style is not None)
+        prompt = prompt_for(n, text, chars, sent_kind, room)
         try:
             res = provider._run(prompt, refs, 1, size)
             if not res.images:
@@ -1228,7 +1283,9 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
             if not fallback:
                 die(f"panel {n}: {e}")
             print(f"  panel {n}: [{provider.name}] feilet ({str(e)[:120]}); prøver [{fallback.name}]", flush=True)
-            refs = fallback._cap_refs([p for _, p in cards], [style] if style else [])
+            refs = fallback._cap_refs(must, [style] if style else [])
+            sent_kind = style_kind if style and style in refs else None
+            prompt = prompt_for(n, text, chars, sent_kind, room)
             res = fallback._run(prompt, refs, 1, size)
             if not res.images:
                 die(f"panel {n}: ingen bilder fra {fallback.name} heller")
@@ -1248,12 +1305,12 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         for pl in plan:
             if pl[0] in only:
                 prev = results.get(pl[0] - 1) if pl[0] > 1 else None
-                results[pl[0]] = run_one(*pl, prev)
+                results[pl[0]] = run_one(*pl, prev, "prev" if prev else None)
         todo = []
     elif only:
         first = plan[0]
         if first[0] in only:
-            results[first[0]] = run_one(*first, None)
+            results[first[0]] = run_one(*first, None, None)
         else:
             results[first[0]] = base_panels[first[0]]
         style = results[first[0]]
@@ -1280,12 +1337,13 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
         todo = plan
     else:
         first = plan[0]
-        results[first[0]] = run_one(*first, None)
+        results[first[0]] = run_one(*first, None, None)
         style = results[first[0]]
         todo = plan[1:]
     if todo:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = {ex.submit(run_one, *pl, style): pl[0] for pl in todo}
+            kind = "bg" if use_bg else "panel1"
+            futs = {ex.submit(run_one, *pl, style, kind): pl[0] for pl in todo}
             for f, n in futs.items():
                 results[n] = f.result()
 
@@ -1293,7 +1351,7 @@ def new_panels(cp, args, provider: Provider, draft: Draft, job: Job) -> None:
     strip = stitch_panels(ordered, width)
     buf = io.BytesIO()
     strip.save(buf, format="PNG")
-    res = Result(images=[(buf.getvalue(), "png")], prompt=prompt_for(first[0], first[1], first[2], False))
+    res = Result(images=[(buf.getvalue(), "png")], prompt=prompt_for(first[0], first[1], first[2], None, rooms[first[0]]))
     extra = {"panels": [PROJ.rel(p) for p in ordered], "panel_size": size}
     if use_bg:
         extra["background"] = PROJ.rel(style)
@@ -1318,6 +1376,137 @@ def cmd_fix(cp, args) -> None:
     if args.dry_run:
         return
     record(draft, provider, "fix", job, provider.fix(job))
+
+
+def cmd_rom(cp, args) -> None:
+    """Draw an empty room card: the place, with nobody in it, sent with every
+    panel marked `[rom: <navn>]`. From a description, or with --fra from an
+    approved panel with the people taken out (how the Kona film rooms were
+    made, 2026-10-05). A card with figures in it copies them and its camera
+    angle into every panel (TODONT.md), so the card must be empty."""
+    navn = args.navn.strip().lower()
+    if not re.fullmatch(r"[a-z0-9_-]+", navn):
+        die(f"romnavn '{args.navn}': bruk bare a-z, 0-9, - og _ (kjokken, ikke kjøkken); det blir rom_{navn} i prosjekt.ini")
+    out = PROJ.root / "assets" / f"rom-{navn}.jpg"
+    if out.exists():
+        die(f"{PROJ.rel(out)} finnes fra før, og ingenting overskrives. Velg et annet navn (f.eks. {navn}2) "
+            f"og pek rom_{navn} på den nye fila om den blir bedre.")
+    provider = get_provider(cp, args.provider)
+    canon_files = split_list(getattr(args, "canon", None) or "") or PROJ.canon_for(provider.type_name, provider.name)
+    style_canon = read_canon(canon_files, [])
+    beskrivelse = (args.beskrivelse or "").strip()
+    refs: list[Path] = []
+    if args.fra:
+        src = Path(args.fra)
+        if not src.is_absolute() and not src.exists():
+            src = PROJ.root / args.fra
+        if not src.exists():
+            die(f"--fra: finner ikke bildet {args.fra}")
+        refs = [src]
+        prompt = (
+            "The reference image is a finished comic panel. Draw the SAME place as ONE single image with "
+            "NOBODY in it: remove every person and every animal, every speech bubble, caption and piece of "
+            "lettering, and fill in what was behind them. Keep the room exactly: walls, windows, curtains, "
+            "furniture, lamps, colours, light and drawing style. Show a little more of the room than the "
+            "panel does, so later panels can be framed from it."
+            f"\n\n{style_canon}" + (f"\n\n---\n\nAlso:\n\n{beskrivelse}" if beskrivelse else "")
+        )
+    else:
+        if not beskrivelse:
+            die("rom: trenger en beskrivelse av rommet, eller --fra <bilde> for å tømme et ferdig panel")
+        prompt = (
+            "The empty setting for a comic, as ONE single landscape image filling the whole picture: the "
+            "place described below with NOBODY in it, no people, no animals, no text, no speech bubbles, "
+            "no panel borders. Show the whole room from a little above eye height, so later panels can be "
+            f"framed from it.\n\n{style_canon}\n\n---\n\nThe place:\n\n{beskrivelse}"
+        )
+    size = "1536x1024"
+    print(f"== rom {navn}")
+    print(f"provider   : [{provider.name}] {provider.describe()}")
+    print(f"kilde      : {PROJ.rel(refs[0]) if refs else 'tekst alene'}")
+    print(f"ut         : {PROJ.rel(out)}  (størrelse {size}, krympes til 1024 px bred)")
+    if args.dry_run:
+        print("prompt:")
+        for line in prompt.splitlines():
+            print("  " + line)
+        return
+    print(f"tegner det tomme rommet, venter ett bilde fra [{provider.name}]", flush=True)
+    t0 = dt.datetime.now()
+    res = provider._run(prompt, refs, 1, size)
+    if not res.images:
+        die(f"rom: ingen bilder i svaret fra [{provider.name}]")
+    data, ext = res.images[0]
+    # the raw image is kept under generert/, like everything else that is generated
+    raw_dir = PROJ.generert / "_rom"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw = raw_dir / f"{dt.datetime.now():%Y%m%d-%H%M%S}-rom-{navn}.{ext}"
+    raw.write_bytes(data)
+    from PIL import Image
+    im = Image.open(raw).convert("RGB")
+    # cards are paid per pixel, not per byte; 1024 px on the long side (AGENTS.md)
+    im.thumbnail((1024, 1024))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    im.save(out, quality=90)
+    print(f"rom        : {PROJ.rel(out)} {im.width}x{im.height}  {(dt.datetime.now() - t0).seconds} s  (rå: {PROJ.rel(raw)})")
+    print(f"\nSe på bildet. Er det rommet du vil ha, legg denne linja under [prosjekt] i {PROJ.rel(PROJ.root / 'prosjekt.ini')}:\n")
+    print(f"rom_{navn} = assets/rom-{navn}.jpg\n")
+    print(f"og skriv [rom: {navn}] i hvert panelavsnitt som foregår der.")
+
+
+def cmd_kort(cp, args) -> None:
+    """Draw a character card from a description: one figure, whole, neutral
+    face, plain background, in the project's style. For someone who will not
+    make cards in another tool; a joke series needs a new priest every week.
+    Rules for a card are in karakterer/README.md in the example project."""
+    navn = args.navn.strip().lower()
+    # one word: the name is matched as a word in the panel text and as the '### Navn' heading in the canon
+    if not re.fullmatch(r"[a-z0-9]+", navn):
+        die(f"navn '{args.navn}': ett ord, bare a-z og 0-9 (presten, johansen). Navnet må stå slik i panelteksten.")
+    existing = [PROJ.karakterer / f"{navn}{ext}" for ext in IMAGE_EXTS if (PROJ.karakterer / f"{navn}{ext}").exists()]
+    if existing:
+        die(f"{PROJ.rel(existing[0])} finnes fra før, og ingenting overskrives. Velg et annet navn (f.eks. {navn}2).")
+    out = PROJ.karakterer / f"{navn}.jpg"
+    beskrivelse = (args.beskrivelse or "").strip()
+    if not beskrivelse:
+        die("kort: trenger en beskrivelse: alder, kropp, hår, ansikt, klær med farger")
+    provider = get_provider(cp, args.provider)
+    canon_files = split_list(getattr(args, "canon", None) or "") or PROJ.canon_for(provider.type_name, provider.name)
+    style_canon = read_canon(canon_files, [])
+    prompt = (
+        "A character reference card for a comic, as ONE single portrait image: ONE figure, the whole body "
+        "from head to shoes, standing in a three-quarter view, arms relaxed, a calm neutral face (not "
+        "smiling), on a plain light background with nothing else. No text, no name, no speech bubble, no "
+        "panel border, no second view of the figure. Give the figure one clear, fixed colour on its clothes "
+        "that can be recognised from a distance."
+        f"\n\n{style_canon}\n\n---\n\nThe figure:\n\n{beskrivelse}"
+    )
+    size = "1024x1536"
+    print(f"== kort {navn}")
+    print(f"provider   : [{provider.name}] {provider.describe()}")
+    print(f"ut         : {PROJ.rel(out)}  (størrelse {size}, krympes til 1024 px høy)")
+    if args.dry_run:
+        print("prompt:")
+        for line in prompt.splitlines():
+            print("  " + line)
+        return
+    print(f"tegner kortet, venter ett bilde fra [{provider.name}]", flush=True)
+    t0 = dt.datetime.now()
+    res = provider._run(prompt, [], 1, size)
+    if not res.images:
+        die(f"kort: ingen bilder i svaret fra [{provider.name}]")
+    data, ext = res.images[0]
+    raw_dir = PROJ.generert / "_kort"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw = raw_dir / f"{dt.datetime.now():%Y%m%d-%H%M%S}-kort-{navn}.{ext}"
+    raw.write_bytes(data)
+    from PIL import Image
+    im = Image.open(raw).convert("RGB")
+    im.thumbnail((1024, 1024))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    im.save(out, quality=90)
+    print(f"kort       : {PROJ.rel(out)} {im.width}x{im.height}  {(dt.datetime.now() - t0).seconds} s  (rå: {PROJ.rel(raw)})")
+    print(f"\nSe på kortet. Er det figuren, skriv {navn} i karakterer: i utkastet, og legg et avsnitt "
+          f"'### {navn.capitalize()}' med kjennetegn i canon-filene.")
 
 
 def credit_for(draft: Draft) -> str | None:
@@ -1958,6 +2147,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--mask", help="x,y,w,h i piksler: kun dette rektangelet males på nytt, resten beholdes eksakt. "
                                   "Teksten beskriver da hva som skal være INNI rektangelet.")
     p.set_defaults(func=cmd_fix)
+
+    p = sub.add_parser("rom", parents=[common], help="tegn et tomt rom (romkort) til assets/rom-<navn>.jpg; "
+                       "paneler med [rom: <navn>] i avsnittet får det som referanse, så rommet blir likt i alle")
+    p.add_argument("navn", help="kort navn uten æøå: kjokken, stue, hage")
+    p.add_argument("beskrivelse", nargs="?", help="hvordan rommet ser ut: vegger, vinduer, gardiner, møbler, farger")
+    p.add_argument("--fra", help="et ferdig panel å tømme for figurer og tekst i stedet for å tegne fra beskrivelsen")
+    p.set_defaults(func=cmd_rom)
+
+    p = sub.add_parser("kort", parents=[common], help="tegn et character card fra en beskrivelse til karakterer/<navn>.jpg")
+    p.add_argument("navn", help="ett ord uten æøå, slik det står i panelteksten: presten, johansen")
+    p.add_argument("beskrivelse", help="alder, kropp, hår, ansikt, klær med farger")
+    p.set_defaults(func=cmd_kort)
 
     p = sub.add_parser("approve", help="legg på header/kant og lagre siste (eller gitt) bilde i striper/")
     p.add_argument("draft")

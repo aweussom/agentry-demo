@@ -10,6 +10,10 @@ Finnes `STATUS.md` og `TODONT.md` i rota, les dem: STATUS er hva som er
 sant i dag, TODONT er det som er prøvd og ikke virket, med målinger. De
 finnes bare i verktøyforfatterens eget repo; mangler de, er denne fila nok.
 
+**Ny stripe med en eier som skriver lite:** følg `VEIVISER.md`. Den
+gjelder når eieren sier "ny stripe", forteller en vits, eller starter deg
+med `ny-stripe.bat`.
+
 ## Prosjekter og oppsett
 
 - `comic.py` finner prosjektet fra utkastets sti, ellers `-P <navn>` (står
@@ -67,6 +71,32 @@ rekkefølgen.
 - Fyll inn plassholdere med Python, ikke sed; en plassholder brutt over to
   linjer overlever sed og blir tegnet.
 
+## Samme rom i flere paneler: romkort
+
+Panelene tegnes hver for seg. Uten et fast bilde av rommet møblerer
+modellen det på nytt hver gang: andre gardiner, ny lampe, annen duk.
+Panel 2 og utover får panel 1 som referanse, så en stripe som starter i
+rommet den foregår i, holder seg stort sett. En stripe som starter ute og
+går inn, får et nytt hus i hvert panel.
+
+```
+comic.py -P <navn> rom kjokken "lyse gule panelvegger, rutete gardiner, grønt skap, blåruta duk"
+comic.py -P <navn> rom kjokken2 --fra paneler/007-noe/2.jpg   # tøm et ferdig panel for figurer
+```
+
+- Legg `rom_kjokken = assets/rom-kjokken.jpg` under `[prosjekt]` i
+  prosjekt.ini, og `[rom: kjokken]` i hvert panelavsnitt som foregår der.
+  Kortet sendes med panelet, etter figurkortene.
+- Rommet må være tomt. Et panel med figurer som mal kopierer figurene og
+  kameravinkelen inn i alle panelene.
+- Navn uten æøå. Et romkort overskrives aldri; lag `kjokken2` og pek
+  `rom_kjokken` på det om det blir bedre.
+- Beskriv rommet konkret: farge på vegger, gardiner, duk, skap, lampe.
+  Det samme skal ikke stå i panelavsnittene; kortet bestemmer stedet.
+- Målt 2026-11-01, ett utkast (ute, så tre paneler på kjøkkenet),
+  `openai-images`: uten kort skiftet kjøkkenet i alle tre; med kort var
+  vegger, gardiner, lampe, skap og duk like.
+
 ## Velge og kommentere: pick-siden
 
 `comic.py -P <navn> pick` starter én server for prosjektet: `/` er lista
@@ -90,7 +120,7 @@ Sløyfen:
 1. **Rett avsnittet og tegn panelet på nytt**: `new --only N`. Førstevalget
    for alt som handler om hva som er i bildet. `--chain` tegner flere
    paneler etter hverandre med panelet foran som referanse, for to paneler
-   som må ha samme biler eller samme rom. `--only N --insert N` når panel N
+   som må ha samme biler. Samme rom: romkort, se over. `--only N --insert N` når panel N
    er nytt i utkastet og de gamle skal ett hakk ned.
 2. **`fix --panel N "..."`** for én lokal ting: en hånd, en labb, en
    boble som skal bli tankeboble, en tekstboks som skal inn. Bare panelet
@@ -145,5 +175,9 @@ Satt opp i keys.ini, valgt med `-p`, standard i prosjekt.ini.
   kjøringen (eller en nyere) til `paneler/`; ellers header og kant på
   stripa i `striper/`. Er `credit =` satt i prosjekt.ini, tegnes en
   kreditteringslinje under bildet.
+- `comic.py rom <navn> "..."` / `--fra <bilde>`: tomt rom til
+  `assets/rom-<navn>.jpg`, se romkort over.
+- `comic.py kort <navn> "..."`: character card fra en beskrivelse til
+  `karakterer/<navn>.jpg`. Navnet er ett ord, slik det står i panelteksten.
 - `comic.py providers`: hva som er satt opp.
 - `video.py`: film fra et skuddmanus, se prosjektets `video/`.

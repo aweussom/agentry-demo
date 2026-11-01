@@ -134,6 +134,13 @@ so the first line must sit higher than the reply.
   the body rotated. Say that the face turns away and comes back.
 - A key frame of a window alone drew a different window. Say what must not
   be in the frame, or the model fills it from the room reference.
+- A strip that starts outside and moves into a kitchen got a new kitchen in
+  every panel. Other curtains, another lamp, another table cloth. Panel 1
+  goes along as a reference, but panel 1 was the yard. `comic.py rom
+  kitchen "yellow walls, checked curtains, green cupboard"` draws the empty
+  room once; `[rom: kitchen]` in a panel paragraph sends it with that
+  panel. The film did this from the start. The strips did not, because my
+  own strips mostly open in the room they stay in.
 
 ## Credit
 
